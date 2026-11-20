@@ -83,10 +83,18 @@ miss highs and lows between snapshots, which makes ATR and Bollinger Bands read 
 npm run dashboard
 ```
 
-Then open <http://localhost:4000>. It lists the stocks in
-[config/dashboard.json](config/dashboard.json); pick one to see its real-time RVOL (relative
-volume), the volume so far against the usual volume by this time of day, and a chart of both
-through the session. Values update on every quote from the Fyers WebSocket.
+Then open <http://localhost:4000>. On start it runs the
+[stock-selection scan](Intraday%20Learning/StockSelection/stock-scanner.md) on the latest
+completed session and lists the stocks it selected, best score first (20 at most; `--top 30`
+changes that). Pick one to see its real-time RVOL (relative volume), the volume so far against
+the usual volume by this time of day, and a chart of both through the session. Values update
+on every quote from the Fyers WebSocket.
+
+The selection takes about 3 minutes when that session has not been scanned yet, and seconds
+when it has (for example after `npm run scan` the evening before). The list is fixed for the
+day; restarting the dashboard during the session keeps the same stocks. `--no-scan` shows the
+fixed list in [config/dashboard.json](config/dashboard.json) instead, which is also used if
+the scan fails or selects nothing.
 
 On start it brings each stock's 1-minute candles up to date (one request per stock once history
 is stored) and builds the baseline: the average cumulative volume at each minute over the last

@@ -29,6 +29,13 @@ node scan-intraday.js --refresh                      # discard cached candles an
 
 `npm run scan -- --at 10:00` passes options through npm.
 
+## Dashboard
+
+`npm run dashboard` runs this scan on the latest completed session when it starts
+(`--completed`) and shows the selected stocks, best score first, 20 at most. If the scan fails or
+selects nothing it falls back to `config/dashboard.json`; `npm run dashboard -- --no-scan` skips
+the scan.
+
 ## Selection logic
 
 A stock must pass every gate. The matches are then ranked by score.

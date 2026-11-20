@@ -252,19 +252,21 @@ async function loadUniverse(out) {
 }
 
 const HELP = `node scan-intraday.js [--date YYYY-MM-DD] [--at HH:MM] [--min-turnover 20] [--min-atr 1] [--min-rvol 1.5]
-                         [--max-spread 0.10] [--rvol-days 10] [--top 10] [--out scan-results] [--refresh]
+                         [--max-spread 0.10] [--rvol-days 10] [--top 10] [--out scan-results] [--refresh] [--completed]
 No arguments: during market hours (from 09:30 IST) scans today up to the last completed 5-minute bar;
-otherwise scans the latest completed session. --at is a 5-minute boundary between 09:30 and 15:30 IST.
+otherwise scans the latest completed session. --completed always scans the latest completed session.
+--at is a 5-minute boundary between 09:30 and 15:30 IST.
 Spread and order-book depth are only checked while the market is open. Needs a valid Fyers token: npm run login.`;
 
-export async function main(args = process.argv.slice(2)) {
+/** `shared.limiter` lets a caller that makes its own Fyers requests (the dashboard) pace them together with the scan. */
+export async function main(args = process.argv.slice(2), shared = {}) {
   const { values } = parseArgs({ args, options: {
     date: { type: 'string' }, at: { type: 'string' },
     'min-turnover': { type: 'string', default: '20' }, 'min-atr': { type: 'string', default: '1' },
     'min-rvol': { type: 'string', default: '1.5' }, 'max-spread': { type: 'string', default: '0.10' },
     'rvol-days': { type: 'string', default: '10' }, top: { type: 'string', default: '10' },
     'per-minute': { type: 'string', default: '40' },
-    out: { type: 'string', default: join(HERE, 'scan-results') }, refresh: { type: 'boolean' }, help: { type: 'boolean' },
+    out: { type: 'string', default: join(HERE, 'scan-results') }, refresh: { type: 'boolean' }, completed: { type: 'boolean' }, help: { type: 'boolean' },
   } });
   if (values.help) { console.log(HELP); return; }
   const config = { minTurnoverCrore: Number(values['min-turnover']), minAtrPct: Number(values['min-atr']), minRvol: Number(values['min-rvol']),
@@ -293,11 +295,11 @@ export async function main(args = process.argv.slice(2)) {
   if (values.refresh) await rm(cache, { recursive: true, force: true });
   await mkdir(out, { recursive: true });
   const store = new CandleStore(cache);
-  const limiter = new RateLimiter({ perMinute, perSecond: 3 });
+  const limiter = shared.limiter ?? new RateLimiter({ perMinute, perSecond: 3 });
   // Fyers counts requests per account, not per run: carry the last minute's calls over from the
   // previous run so back-to-back scans cannot exceed the per-minute limit together.
   const limiterFile = join(out, 'cache', 'recent-requests.json');
-  limiter.calls = await readFile(limiterFile, 'utf8').then(JSON.parse).then(v => v.filter(finite)).catch(() => []);
+  limiter.calls = [...await readFile(limiterFile, 'utf8').then(JSON.parse).then(v => v.filter(finite)).catch(() => []), ...limiter.calls].sort((a, b) => a - b);
   const saveLimiter = () => { try { mkdirSync(dirname(limiterFile), { recursive: true }); writeFileSync(limiterFile, JSON.stringify(limiter.calls)); } catch { /* best effort */ } };
   process.once('exit', saveLimiter);
   const state = { requests: 0, rateLimitHits: 0 };
@@ -321,7 +323,9 @@ export async function main(args = process.argv.slice(2)) {
   const bench5 = await candles(BENCHMARK, '5m', 50, () => false);
   const todayMinutes = bench5.filter(b => b.date === today).map(b => b.minute);
   let session, cutoff;
-  if (values.date) { session = values.date; cutoff = values.at ?? '15:30'; }
+  if (values.completed && (values.date || values.at)) throw new Error('--completed cannot be combined with --date or --at');
+  if (values.completed) { session = benchDaily.at(-1)?.date; cutoff = '15:30'; }
+  else if (values.date) { session = values.date; cutoff = values.at ?? '15:30'; }
   else if (benchDaily.some(b => b.date === today) && !values.at) { session = today; cutoff = '15:30'; }
   else if (todayMinutes.length) {
     const available = Math.min(CLOSE_MIN, todayMinutes.at(-1) + 5);

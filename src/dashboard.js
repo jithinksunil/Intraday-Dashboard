@@ -1,8 +1,11 @@
-// Real-time dashboard server. On start it brings 1-minute history up to date for the dashboard
-// symbols (needed for the RVOL baseline), then subscribes to live quotes and pushes RVOL to the
-// browser on every update.
+// Real-time dashboard server. On start it runs the stock-selection scan (Intraday Learning/
+// StockSelection) on the latest completed session and shows the selected stocks. It then brings
+// their 1-minute history up to date (needed for the RVOL baseline), subscribes to live quotes
+// and pushes RVOL to the browser on every update.
 //
-// Usage: npm run dashboard [-- --port 4000] [--lan] [--config config/dashboard.json] [--data data]
+// Usage: npm run dashboard [-- --port 4000] [--lan] [--top 20] [--no-scan] [--config config/dashboard.json] [--data data]
+// --no-scan skips the selection and shows the fixed list in the config file, which is also the
+// fallback when the scan fails or selects nothing.
 // --lan also serves other devices on the same network (phone on the same Wi-Fi); default is this machine only.
 import { readFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
@@ -24,10 +27,13 @@ const { values: args } = parseArgs({
     port: { type: 'string', default: '4000' },
     lan: { type: 'boolean', default: false },
     config: { type: 'string', default: 'config/dashboard.json' },
+    top: { type: 'string', default: '20' },
+    'no-scan': { type: 'boolean', default: false },
     data: { type: 'string', default: 'data' },
   },
 });
 
+const MAX_SYMBOLS = 50; // each uses a quote and a depth subscription, and the Fyers free plan allows 100
 const FIRST_LOAD_DAYS = 45; // enough for a 20-session baseline when a symbol has no stored candles
 const log = (msg) => console.log(`[${istClock()} IST] ${msg}`);
 
@@ -38,7 +44,8 @@ try {
   loadEnv();
   symbols = JSON.parse(readFileSync(args.config, 'utf8')).symbols;
   if (!Array.isArray(symbols) || !symbols.length) throw new Error(`${args.config} needs a non-empty "symbols" array`);
-  if (symbols.length > 50) throw new Error('At most 50 symbols: each uses a quote and a depth subscription, and the Fyers free plan allows 100');
+  if (symbols.length > MAX_SYMBOLS) throw new Error(`At most ${MAX_SYMBOLS} symbols: each uses a quote and a depth subscription, and the Fyers free plan allows 100`);
+  if (!(Number.isInteger(Number(args.top)) && Number(args.top) >= 1 && Number(args.top) <= MAX_SYMBOLS)) throw new Error(`--top must be a whole number from 1 to ${MAX_SYMBOLS}`);
   appId = requireEnv('FYERS_APP_ID').FYERS_APP_ID;
   accessToken = loadToken(appId);
 } catch (err) {
@@ -53,6 +60,28 @@ model.setAppId(appId);
 model.setAccessToken(accessToken);
 const limiter = new RateLimiter({ perMinute: 40, perSecond: 3 });
 const historyState = { requests: 0, rateLimitHits: 0 };
+
+// Stock selection: the scan's matches, best score first, replace the fixed config list.
+if (!args['no-scan']) {
+  log('selecting stocks from the latest completed session (about 3 minutes if not scanned since the close)...');
+  try {
+    const { main: scan } = await import('../Intraday Learning/StockSelection/scan-intraday.js');
+    const report = await scan(['--completed'], { limiter }); // shares the limiter: one request allowance per account
+    const picked = report.matches.slice(0, Number(args.top)).map((row) => row.fyers);
+    if (picked.length) {
+      symbols = picked;
+      log(`showing ${picked.length} of ${report.matchedCount} stocks selected from the ${report.session} session`);
+    } else {
+      log(`the scan selected no stocks for ${report.session}; showing the list in ${args.config}`);
+    }
+  } catch (err) {
+    if (err instanceof FatalHistoryError) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    log(`stock selection failed (${err.message}); showing the list in ${args.config}`);
+  }
+}
 
 /** Brings stored 1-minute candles up to date. Returns the symbols that could not be refreshed. */
 async function refreshHistory(list) {
