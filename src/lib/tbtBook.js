@@ -5,6 +5,7 @@
 // SDK applies them by array position instead, which misplaces levels whenever a diff skips one,
 // so this file decodes and merges itself.
 import { trimEmptyTail } from './normalize.js';
+import { toEpochMs } from './time.js';
 
 export const TBT_LEVELS = 50;
 
@@ -18,6 +19,12 @@ export function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+/** Feed timestamps arrive in seconds on the live feed; junk values (seen pre-market) become null. */
+const feedTs = (v) => {
+  const n = toNum(v);
+  return n != null && n >= 1e9 ? toEpochMs(n) : null;
+};
 
 const emptySide = () => Array.from({ length: TBT_LEVELS }, () => [0, 0, 0]);
 const emptyBook = () => ({ tbq: null, tsq: null, bids: emptySide(), asks: emptySide() });
@@ -72,8 +79,8 @@ export class TbtBooks {
         k: 'd50',
         sym,
         recv: recvMs,
-        exch: toNum(feed.feedTime),
-        sent: toNum(feed.sendTime),
+        exch: feedTs(feed.feedTime),
+        sent: feedTs(feed.sendTime),
         seq,
         ...(snap && { snap: true }),
         ...(seqJump && { seqJump: true }),

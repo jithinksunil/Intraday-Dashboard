@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading dashboard</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6eb; --text: #15181d; --muted: #68707d;
+    --accent: #2f6fed; --up: #10895a; --down: #c8372d; --hot: #b45309; --hover: #f0f3f8; --avg: #9aa3b2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b21; --line: #272d36; --text: #e8ebf0; --muted: #8b95a5;
+      --accent: #6b9bff; --up: #3ecf8e; --down: #ff7a6e; --hot: #f5a524; --hover: #1e242c; --avg: #6a7484;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  .num { font-variant-numeric: tabular-nums; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  #status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  #status::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  #status.live::before { background: var(--up); }
+  #status.down::before { background: var(--down); }
+  main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px 20px; }
+  @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  main.closed { grid-template-columns: 1fr; }
+  main.closed nav { display: none; }
+  .head-left { display: flex; align-items: center; gap: 12px; }
+  #toggle { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+  #toggle:hover { background: var(--hover); }
+  #toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  #list { list-style: none; margin: 0; padding: 6px; }
+  #list button {
+    width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
+    padding: 9px 10px; border: 0; border-radius: 7px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  }
+  #list button:hover { background: var(--hover); }
+  #list button[aria-current="true"] { background: var(--hover); box-shadow: inset 3px 0 0 var(--accent); }
+  #list button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .name { font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .pill { min-width: 58px; text-align: right; font-weight: 600; }
+  .pill.hot { color: var(--hot); }
+  .pill.quiet { color: var(--muted); font-weight: 500; }
+  #detail { padding: 20px 22px; min-height: 420px; }
+  #detail h2 { margin: 0; font-size: 20px; }
+  .price { color: var(--muted); margin-top: 2px; }
+  .hero { display: flex; align-items: baseline; gap: 12px; margin: 22px 0 4px; }
+  .hero .big { font-size: 54px; font-weight: 650; letter-spacing: -0.02em; line-height: 1; }
+  .hero .label { color: var(--muted); }
+  .verdict { margin: 0 0 20px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+  .chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .chart-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 2px; margin-right: 6px; vertical-align: middle; background: var(--accent); }
+  .legend .avg::before { background: var(--avg); }
+  svg { max-width: 100%; height: auto; display: block; }
+  svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .grid { stroke: var(--line); stroke-width: 1; }
+  .l-avg { fill: none; stroke: var(--avg); stroke-width: 1.5; stroke-dasharray: 4 3; }
+  .l-today { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+  .guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 4; }
+  .l-vwap { fill: none; stroke: var(--hot); stroke-width: 1.5; }
+  .legend .vw::before { background: var(--hot); }
+  .jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
+  .jump a { color: var(--muted); text-decoration: none; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
+  .jump a:hover, .jump a:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
+  .split { display: flex; height: 10px; border-radius: 5px; overflow: hidden; background: var(--line); margin: 0 0 6px; }
+  .split .b { background: var(--up); } .split .a { background: var(--down); }
+  .split-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+  table.book { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.book th { color: var(--muted); font-size: 12px; font-weight: 500; padding: 4px 8px; text-align: right; }
+  table.book td { padding: 5px 8px; text-align: right; position: relative; }
+  table.book td.px { font-weight: 600; }
+  table.book td.bid.px { color: var(--up); } table.book td.ask.px { color: var(--down); }
+  table.book td.ask, table.book th.ask { text-align: left; }
+  table.book .bar { position: absolute; top: 2px; bottom: 2px; opacity: 0.16; border-radius: 3px; }
+  table.book td.bid .bar { right: 0; background: var(--up); } table.book td.ask .bar { left: 0; background: var(--down); }
+  table.book td span { position: relative; }
+  .tag { display: inline-block; font-size: 12px; color: var(--hot); border: 1px solid var(--hot); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: middle; }
+  table.levels { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  table.levels th { color: var(--muted); font-size: 12px; font-weight: 500; padding: 4px 8px; text-align: right; }
+  table.levels th:first-child, table.levels td:first-child { text-align: left; }
+  table.levels td { padding: 6px 8px; text-align: right; border-top: 1px solid var(--line); }
+  table.levels tr.now td { background: var(--hover); font-weight: 600; }
+  .metric { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 4px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-left">
+    <button id="toggle" type="button" aria-controls="stocks" aria-expanded="true">☰ <span id="toggle-text">Hide stocks</span></button>
+    <h1>Trading dashboard</h1>
+  </div>
+  <div id="status" role="status">Connecting…</div>
+</header>
+<main>
+  <nav class="panel" id="stocks" aria-label="Stocks"><ul id="list"></ul></nav>
+  <section class="panel" id="detail" aria-live="polite"><p class="empty">Waiting for data…</p></section>
+</main>
+<script>
+const rows = new Map();          // sym -> latest row
+let order = [];                  // symbols in config order
+let selected = null;
+let curves = null;               // { sym, average, today } for the selected symbol
+let feed = { feed: 'connecting' };
+let socketUp = false;
+
+const $ = (id) => document.getElementById(id);
+const short = (sym) => sym.replace(/^[A-Z]+:/, '').replace(/-EQ$/, '');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const price = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const compact = new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 2 });
+const fmt = (f, v) => (v == null ? '–' : f.format(v));
+const fmtRvol = (v) => (v == null ? '–' : v.toFixed(2) + '×');
+const clock = (ms) => new Date(ms).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+const dayText = (ms) => new Date(ms).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
+const istDay = (ms) => Math.floor((ms + 19800000) / 86400000);
+const rvolClass = (v) => (v == null ? 'quiet' : v >= 1.5 ? 'hot' : v < 0.7 ? 'quiet' : '');
+
+function verdict(v) {
+  if (v == null) return '';
+  if (v >= 2) return 'Volume is running at more than twice its usual pace for this time of day.';
+  if (v >= 1.5) return 'Volume is well above its usual pace for this time of day.';
+  if (v >= 1.1) return 'Volume is a little above its usual pace for this time of day.';
+  if (v >= 0.9) return 'Volume is in line with its usual pace for this time of day.';
+  if (v >= 0.7) return 'Volume is a little below its usual pace for this time of day.';
+  return 'Volume is well below its usual pace for this time of day.';
+}
+
+function renderStatus() {
+  const el = $('status');
+  const newest = Math.max(0, ...[...rows.values()].map((r) => r.asOf ?? 0));
+  el.className = '';
+  if (!socketUp) { el.textContent = 'Dashboard server not reachable. Retrying…'; el.className = 'down'; return; }
+  if (feed.feed !== 'connected') { el.textContent = feed.feed === 'connecting' ? 'Connecting to Fyers…' : 'Fyers feed disconnected. Reconnecting…'; el.className = 'down'; return; }
+  if (!newest) { el.textContent = 'Connected. Waiting for the first quotes…'; return; }
+  if (Date.now() - newest < 60000) { el.textContent = 'Live · ' + clock(newest) + ' IST'; el.className = 'live'; return; }
+  el.textContent = 'Market closed · showing ' + dayText(newest) + ', ' + clock(newest) + ' IST';
+}
+
+function renderList() {
+  $('list').innerHTML = order.map((sym) => {
+    const r = rows.get(sym) ?? {};
+    const chg = r.changePct;
+    return `<li><button data-sym="${esc(sym)}" aria-current="${sym === selected}">
+      <span><span class="name">${esc(short(sym))}</span><br><span class="sub num">${fmt(price, r.ltp)}${r.vwapDevPct == null ? '' : ` <span class="${r.vwapDevPct >= 0 ? 'up' : 'down'}" title="Price is ${r.vwapDevPct >= 0 ? 'above' : 'below'} VWAP${r.vwapDevAtr == null ? '' : ' by ' + Math.abs(r.vwapDevAtr).toFixed(2) + ' ATR'}">${r.vwapDevPct >= 0 ? '▲' : '▼'} ${r.vwapDevAtr == null ? 'VWAP' : Math.abs(r.vwapDevAtr).toFixed(1) + ' ATR'}</span>`}</span></span>
+      <span class="sub num ${chg == null ? '' : chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span>
+      <span class="pill num ${rvolClass(r.rvol)}" title="Relative volume">${fmtRvol(r.rvol)}</span>
+    </button></li>`;
+  }).join('');
+}
+
+/** Line chart over the 375 session minutes. lines: [{ data, cls }]; fromZero pins the y-axis at 0. */
+function chartSvg(lines, { fromZero, format, label, range, guides = [] }) {
+  // Drawn at the panel's real pixel width so a wide page gives a wider chart, not a taller one.
+  const W = Math.max(360, $('detail').clientWidth - 44), H = 240, L = 58, R = 10, T = 10, B = 24, N = 375;
+  const vals = lines.flatMap((l) => (l.data ?? []).filter((v) => v != null));
+  if (!vals.length) return '<p class="empty">No data for this session yet.</p>';
+  let min = fromZero ? 0 : Math.min(...vals), max = Math.max(...vals);
+  if (range) { [min, max] = range; }
+  else {
+    for (const g of guides) { const v = typeof g === 'number' ? g : g.v; min = Math.min(min, v); max = Math.max(max, v); }
+    if (max === min) { max += 1; min -= fromZero ? 0 : 1; }
+    if (!fromZero) { const pad = (max - min) * 0.08; min -= pad; max += pad; }
+  }
+  const x = (i) => L + (i / (N - 1)) * (W - L - R);
+  const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
+  const path = (arr) => { let d = '', pen = false; arr.forEach((v, i) => { if (v == null) return; d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); pen = true; }); return d; };
+  guides = guides.map((g) => (typeof g === 'number' ? { v: g, label: format(g) } : g));
+  const guideLines = guides.map((g) => `<line class="guide" x1="${L}" x2="${W - R}" y1="${y(g.v)}" y2="${y(g.v)}"/><text x="${W - R}" y="${y(g.v) - 4}" text-anchor="end">${g.label}</text>`).join('');
+  const yTicks = [0, 0.5, 1].map((f) => { const v = min + (max - min) * f; return `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${format(v)}</text>`; }).join('');
+  const xTicks = [[0, '09:15'], [105, '11:00'], [225, '13:00'], [374, '15:30']].map(([i, t]) => `<text x="${x(i)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === 374 ? 'end' : 'middle'}">${t}</text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">
+    ${yTicks}${xTicks}${guideLines}
+    ${lines.map((l) => (l.data ? `<path class="${l.cls}" d="${path(l.data)}"/>` : '')).join('')}
+  </svg>`;
+}
+
+const fmtAtr = (v) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + ' ATR');
+function stretchVerdict(d) {
+  if (d == null) return '';
+  const a = Math.abs(d);
+  if (a < 1) return 'That is within one ATR, close to VWAP.';
+  if (a < 2) return 'That is a moderate distance: between one and two ATRs.';
+  return 'That is a stretched distance: more than two ATRs.';
+}
+
+const qty = new Intl.NumberFormat('en-IN');
+function imbalanceVerdict(v, live) {
+  if (v == null) return 'No order book received yet.';
+  const buy = ((1 + v) / 2) * 100;
+  const lead = Math.abs(v) < 0.1 ? 'Buy and sell quantity in the top 5 levels are roughly balanced' : `${buy >= 50 ? 'Buyers' : 'Sellers'} hold ${Math.max(buy, 100 - buy).toFixed(0)}% of the quantity in the top 5 levels`;
+  return lead + (live ? '.' : '. The market is closed, so this is the leftover book, not live interest.');
+}
+function bookTable(book) {
+  if (!book || (!book.bids.length && !book.asks.length)) return '<p class="empty">No order book received yet.</p>';
+  const max = Math.max(1, ...book.bids.map((l) => l[1]), ...book.asks.map((l) => l[1]));
+  const cell = (l, side) => l
+    ? `<td class="${side}">${qty.format(l[2])}</td><td class="${side}"><i class="bar" style="width:${((l[1] / max) * 100).toFixed(1)}%"></i><span>${qty.format(l[1])}</span></td><td class="${side} px">${price.format(l[0])}</td>`
+    : `<td class="${side}"></td><td class="${side}"></td><td class="${side} px">–</td>`;
+  let rowsHtml = '';
+  for (let i = 0; i < 5; i++) {
+    const b = cell(book.bids[i], 'bid');
+    const a = cell(book.asks[i], 'ask').match(/<td[\s\S]*?<\/td>/g).reverse().join('');
+    rowsHtml += `<tr>${b}${a}</tr>`;
+  }
+  return `<table class="book"><thead><tr><th>Orders</th><th>Bid qty</th><th>Bid</th><th class="ask">Ask</th><th class="ask">Ask qty</th><th class="ask">Orders</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+}
+
+function levelsVerdict(r) {
+  if (!r.pivots) return 'No previous session in the stored candles, so pivot levels can\'t be calculated.';
+  const side = r.ltp >= r.pivots.p ? 'above the pivot, the bullish side' : 'below the pivot, the bearish side';
+  if (!r.support) return `Price is below S3, under every pivot support. It is ${side}.`;
+  if (!r.resistance) return `Price is above R3, over every pivot resistance. It is ${side}.`;
+  return `Price is between ${r.support.name} and ${r.resistance.name}, and ${side}.`;
+}
+function levelsTable(r) {
+  const p = r.pivots;
+  const rowsData = [['R3', p.r3], ['R2', p.r2], ['R1', p.r1], ['Pivot', p.p], ['S1', p.s1], ['S2', p.s2], ['S3', p.s3]];
+  let html = '';
+  let placed = false;
+  const nowRow = `<tr class="now"><td>Last price</td><td>₹${price.format(r.ltp)}</td><td></td></tr>`;
+  for (const [name, v] of rowsData) {
+    if (!placed && r.ltp >= v) { html += nowRow; placed = true; }
+    const d = ((v - r.ltp) / r.ltp) * 100;
+    html += `<tr><td>${name}${name === 'Pivot' ? '' : name[0] === 'R' ? ' <span class="sub">resistance</span>' : ' <span class="sub">support</span>'}</td><td>₹${price.format(v)}</td><td class="${d >= 0 ? 'up' : 'down'}">${signed(d)}%</td></tr>`;
+  }
+  if (!placed) html += nowRow;
+  return `<table class="levels"><thead><tr><th>Level</th><th>Price</th><th>Distance from price</th></tr></thead><tbody>${html}</tbody></table>`;
+}
+const levelCard = (title, lv) => `<div class="stat"><div class="k">${title}</div><div class="v num">${lv ? lv.name + ' · ₹' + price.format(lv.price) : '–'}</div><div class="k num">${lv ? signed(lv.distancePct) + '% away' : ''}</div></div>`;
+
+const swingTime = (t, asOf) => {
+  const ms = t * 1000;
+  const sameDay = asOf && istDay(ms) === istDay(asOf);
+  return (sameDay ? '' : dayText(ms) + ', ') + clock(ms).slice(0, 5);
+};
+function swingVerdict(r) {
+  const h = r.swingHigh, l = r.swingLow;
+  if (!h && !l) return 'No swing highs or lows in the stored candles yet.';
+  if (h?.broken) return 'Price is above the last swing high, so that resistance has been broken.';
+  if (l?.broken) return 'Price is below the last swing low, so that support has been broken.';
+  if (h && l) return 'Price is between the last swing low (support) and the last swing high (resistance).';
+  return h ? 'Price is below the last swing high (resistance).' : 'Price is above the last swing low (support).';
+}
+const swingCard = (title, sw, asOf) => `<div class="stat"><div class="k">${title}</div><div class="v num">${sw ? '₹' + price.format(sw.price) : '–'}${sw?.broken ? '<span class="tag">broken</span>' : ''}</div><div class="k num">${sw ? 'formed ' + swingTime(sw.t, asOf) + ' · ' + signed(sw.distancePct) + '% away' : ''}</div></div>`;
+function swingTable(r) {
+  const all = [...r.swingHighs.map((x) => ({ ...x, kind: 'Swing high', role: 'resistance' })), ...r.swingLows.map((x) => ({ ...x, kind: 'Swing low', role: 'support' }))].sort((a, b) => b.t - a.t);
+  if (!all.length) return '';
+  return `<table class="levels"><thead><tr><th>Formed</th><th>Type</th><th>Price</th><th>Distance from price</th></tr></thead><tbody>${all.map((x) => {
+    const d = ((x.price - r.ltp) / r.ltp) * 100;
+    return `<tr><td>${swingTime(x.t, r.asOf)}</td><td>${x.kind} <span class="sub">${x.role}</span></td><td>₹${price.format(x.price)}</td><td class="${d >= 0 ? 'up' : 'down'}">${signed(d)}%</td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+
+function trendVerdict(slope, vsEma) {
+  if (slope == null) return 'Not enough candles yet to calculate the EMA.';
+  const dir = slope > 0.02 ? 'rising' : slope < -0.02 ? 'falling' : 'flat';
+  const side = vsEma == null ? '' : ` Price is ${Math.abs(vsEma).toFixed(2)}% ${vsEma >= 0 ? 'above' : 'below'} it.`;
+  return `The 20-candle EMA is ${dir}.${side}`;
+}
+
+function rsiVerdict(v) {
+  if (v == null) return 'Not enough candles yet to calculate RSI.';
+  if (v >= 70) return 'RSI is above 70: recent gains have strongly outweighed losses. Often called overbought, but in a strong trend it can stay here.';
+  if (v <= 30) return 'RSI is below 30: recent losses have strongly outweighed gains. Often called oversold, but in a strong downtrend it can stay here.';
+  if (v >= 55) return 'RSI is above 50: recent gains have outweighed losses.';
+  if (v <= 45) return 'RSI is below 50: recent losses have outweighed gains.';
+  return 'RSI is near 50: gains and losses have been roughly balanced.';
+}
+const signed = (v, d = 2) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d));
+
+function volVerdict(rel) {
+  if (rel == null) return 'Not enough candles yet to compare volatility with its usual level.';
+  if (rel >= 1.3) return 'The stock is moving more than usual: ATR is ' + rel.toFixed(2) + '× its recent average.';
+  if (rel <= 0.7) return 'The stock is moving less than usual: ATR is ' + rel.toFixed(2) + '× its recent average.';
+  return 'The stock is moving about as much as usual: ATR is ' + rel.toFixed(2) + '× its recent average.';
+}
+
+function vwapVerdict(dev) {
+  if (dev == null) return 'VWAP appears once the stock has traded today.';
+  const side = dev >= 0 ? 'above' : 'below';
+  if (Math.abs(dev) < 0.05) return 'Price is sitting at VWAP.';
+  return `Price is ${Math.abs(dev).toFixed(2)}% ${side} VWAP, the average price traded today.`;
+}
+
+function renderDetail() {
+  const el = $('detail');
+  const r = selected && rows.get(selected);
+  if (!r || r.ltp == null) { el.innerHTML = '<p class="empty">Waiting for data…</p>'; return; }
+  const chg = r.changePct;
+  const c = curves && curves.sym === selected ? curves : null;
+  const stale = r.asOf && Date.now() - r.asOf > 60000;
+  el.innerHTML = `
+    <h2>${esc(short(selected))}</h2>
+    <div class="price num">₹${fmt(price, r.ltp)} <span class="${chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span></div>
+    <div class="jump"><a href="#s-volume">Volume</a><a href="#s-vwap">VWAP</a><a href="#s-volatility">Volatility</a><a href="#s-momentum">Momentum</a><a href="#s-trend">Trend</a><a href="#s-book">Order book</a><a href="#s-levels">Pivot levels</a><a href="#s-swings">Swing levels</a></div>
+    <div class="hero" id="s-volume"><span class="big num">${fmtRvol(r.rvol)}</span><span class="label">relative volume (RVOL)</span></div>
+    <p class="verdict">${r.rvol == null ? (r.baselineSessions ? 'RVOL starts once the market opens at 09:15 IST.' : 'No volume history for this stock yet, so RVOL can\'t be calculated.') : verdict(r.rvol)}</p>
+    <div class="stats">
+      <div class="stat"><div class="k">Volume ${stale ? 'for the day' : 'so far today'}</div><div class="v num">${fmt(compact, r.volume)}</div></div>
+      <div class="stat"><div class="k">Usual volume by this time</div><div class="v num">${fmt(compact, r.expected)}</div></div>
+      <div class="stat"><div class="k">Compared against</div><div class="v num">${r.baselineSessions ? 'last ' + r.baselineSessions + ' sessions' : '–'}</div></div>
+      <div class="stat"><div class="k">Data as of</div><div class="v num">${r.asOf ? (stale ? dayText(r.asOf) + ', ' : '') + clock(r.asOf) : '–'}</div></div>
+    </div>
+    <div class="chart-head"><h3>Cumulative volume through the session</h3>
+      <div class="legend"><span>${stale && r.asOf ? dayText(r.asOf) : 'Today'}</span><span class="avg">Average</span></div></div>
+    ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
+    <p class="note">RVOL = volume so far ÷ average volume by the same time of day. Above 1 means busier than usual.</p>
+
+    <div class="metric" id="s-vwap">
+      <div class="hero"><span class="big num">${r.vwap == null ? '–' : '₹' + price.format(r.vwap)}</span><span class="label">VWAP (volume-weighted average price)</span></div>
+      <p class="verdict">${vwapVerdict(r.vwapDevPct)} ${stretchVerdict(r.vwapDevAtr)}</p>
+      <div class="stats">
+        <div class="stat"><div class="k">Last price</div><div class="v num">₹${fmt(price, r.ltp)}</div></div>
+        <div class="stat"><div class="k">VWAP deviation (%)</div><div class="v num ${r.vwapDevPct == null ? '' : r.vwapDevPct >= 0 ? 'up' : 'down'}">${r.vwapDevPct == null ? '–' : (r.vwapDevPct >= 0 ? '+' : '') + r.vwapDevPct.toFixed(2) + '%'}</div></div>
+        <div class="stat"><div class="k">VWAP deviation (₹)</div><div class="v num">${r.vwap == null ? '–' : (r.ltp - r.vwap >= 0 ? '+' : '−') + '₹' + price.format(Math.abs(r.ltp - r.vwap))}</div></div>
+        <div class="stat"><div class="k">Normalized VWAP deviation</div><div class="v num ${r.vwapDevAtr == null ? '' : r.vwapDevAtr >= 0 ? 'up' : 'down'}">${fmtAtr(r.vwapDevAtr)}</div></div>
+        <div class="stat"><div class="k">5-minute ATR</div><div class="v num">${r.atr5 == null ? '–' : '₹' + price.format(r.atr5)}</div></div>
+      </div>
+      <div class="chart-head"><h3>Price and VWAP through the session</h3>
+        <div class="legend"><span>Price</span><span class="vw">VWAP</span></div></div>
+      ${c ? chartSvg([{ data: c.vwapCurve, cls: 'l-vwap' }, { data: c.price, cls: 'l-today' }], { fromZero: false, format: (v) => price.format(v), label: 'Price against VWAP through the session' }) : '<p class="empty">Loading chart…</p>'}
+      <p class="note">VWAP is the average price paid today, weighted by volume. It comes from the exchange feed and resets each morning. Normalized VWAP deviation = (price − VWAP) ÷ 5-minute ATR(14), so it shows the distance in units of the stock's own recent movement.</p>
+    </div>
+
+    <div class="metric" id="s-volatility">
+      <div class="hero"><span class="big num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</span><span class="label">relative ATR (volatility vs usual)</span></div>
+      <p class="verdict">${volVerdict(r.relAtr)}</p>
+      <div class="stats">
+        <div class="stat"><div class="k">True range (last 5-min candle)</div><div class="v num">${r.tr5 == null ? '–' : '₹' + price.format(r.tr5)}</div></div>
+        <div class="stat"><div class="k">ATR (14, 5-min)</div><div class="v num">${r.atr5 == null ? '–' : '₹' + price.format(r.atr5)}</div></div>
+        <div class="stat"><div class="k">ATR %</div><div class="v num">${r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%'}</div></div>
+        <div class="stat"><div class="k">Relative ATR</div><div class="v num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</div></div>
+      </div>
+      <div class="chart-head"><h3>True range and ATR through the session (5-minute candles)</h3>
+        <div class="legend"><span>True range</span><span class="vw">ATR</span></div></div>
+      ${c ? chartSvg([{ data: c.trCurve, cls: 'l-today' }, { data: c.atrCurve, cls: 'l-vwap' }], { fromZero: true, format: (v) => price.format(v), label: 'True range of each 5-minute candle against ATR' }) : '<p class="empty">Loading chart…</p>'}
+      <p class="note">True range is the largest of a candle's high − low and its gaps from the previous close. ATR is its 14-candle average. ATR % = ATR ÷ price, which makes stocks comparable. Relative ATR = ATR ÷ its own average over the previous 100 candles; 1× is normal. These use completed 5-minute candles and refresh every 5 minutes.</p>
+    </div>
+
+    <div class="metric" id="s-momentum">
+      <div class="hero"><span class="big num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</span><span class="label">RSI (14, 5-min)</span></div>
+      <p class="verdict">${rsiVerdict(r.rsi)}</p>
+      <div class="stats">
+        <div class="stat"><div class="k">RSI (14)</div><div class="v num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</div></div>
+        <div class="stat"><div class="k">Rate of change (10 candles)</div><div class="v num ${r.roc == null ? '' : r.roc >= 0 ? 'up' : 'down'}">${signed(r.roc)}${r.roc == null ? '' : '%'}</div></div>
+        <div class="stat"><div class="k">ROC compares price with</div><div class="v num">50 minutes ago</div></div>
+      </div>
+      <div class="chart-head"><h3>RSI through the session</h3><div class="legend"><span>RSI</span></div></div>
+      ${c ? chartSvg([{ data: c.rsiCurve, cls: 'l-today' }], { range: [0, 100], guides: [30, 70], format: (v) => v.toFixed(0), label: 'RSI through the session with 30 and 70 marked' }) : '<p class="empty">Loading chart…</p>'}
+      <div class="chart-head" style="margin-top:18px"><h3>Rate of change through the session</h3><div class="legend"><span>ROC %</span></div></div>
+      ${c ? chartSvg([{ data: c.rocCurve, cls: 'l-today' }], { guides: [0], format: (v) => v.toFixed(2), label: 'Rate of change through the session with zero marked' }) : '<p class="empty">Loading chart…</p>'}
+      <p class="note">Rate of change = how far price has moved, in percent, over the last 10 five-minute candles. Positive means momentum is up. RSI (0 to 100) compares the size of recent gains with recent losses over 14 candles. Both headline values include the candle now forming, using the last price; the charts show completed candles.</p>
+    </div>
+
+    <div class="metric" id="s-trend">
+      <div class="hero"><span class="big num ${r.emaSlopePct == null ? '' : r.emaSlopePct >= 0 ? 'up' : 'down'}">${signed(r.emaSlopePct, 3)}${r.emaSlopePct == null ? '' : '%'}</span><span class="label">EMA slope (20-candle EMA, 5-min)</span></div>
+      <p class="verdict">${trendVerdict(r.emaSlopePct, r.priceVsEmaPct)}</p>
+      <div class="stats">
+        <div class="stat"><div class="k">EMA (20)</div><div class="v num">${r.ema == null ? '–' : '₹' + price.format(r.ema)}</div></div>
+        <div class="stat"><div class="k">EMA slope %</div><div class="v num ${r.emaSlopePct == null ? '' : r.emaSlopePct >= 0 ? 'up' : 'down'}">${signed(r.emaSlopePct, 3)}${r.emaSlopePct == null ? '' : '%'}</div></div>
+        <div class="stat"><div class="k">Price vs EMA</div><div class="v num ${r.priceVsEmaPct == null ? '' : r.priceVsEmaPct >= 0 ? 'up' : 'down'}">${signed(r.priceVsEmaPct)}${r.priceVsEmaPct == null ? '' : '%'}</div></div>
+      </div>
+      <div class="chart-head"><h3>Price and EMA through the session</h3><div class="legend"><span>Price</span><span class="vw">EMA (20)</span></div></div>
+      ${c ? chartSvg([{ data: c.emaCurve, cls: 'l-vwap' }, { data: c.price, cls: 'l-today' }], { format: (v) => price.format(v), label: 'Price against its 20-candle EMA through the session' }) : '<p class="empty">Loading chart…</p>'}
+      <div class="chart-head" style="margin-top:18px"><h3>EMA slope through the session</h3><div class="legend"><span>Slope %</span></div></div>
+      ${c ? chartSvg([{ data: c.slopeCurve, cls: 'l-today' }], { guides: [0], format: (v) => v.toFixed(3), label: 'EMA slope through the session with zero marked' }) : '<p class="empty">Loading chart…</p>'}
+      <p class="note">EMA is an average of the last 20 five-minute closes that gives recent candles more weight. EMA slope % = how much the EMA itself has changed over the last 5 candles (25 minutes): positive means the trend is rising, near zero means it is flattening. Headline values include the candle now forming; the charts show completed candles.</p>
+    </div>
+
+    <div class="metric" id="s-book">
+      <div class="hero"><span class="big num ${r.imbalance5 == null ? '' : r.imbalance5 >= 0 ? 'up' : 'down'}">${signed(r.imbalance5)}</span><span class="label">order book imbalance (top 5 levels)${r.book && !r.bookLive ? '<span class="tag">market closed</span>' : ''}</span></div>
+      <p class="verdict">${imbalanceVerdict(r.imbalance5, r.bookLive)}</p>
+      ${r.imbalance5 == null ? '' : `<div class="split" role="img" aria-label="Share of quantity on the buy and sell side"><div class="b" style="width:${(((1 + r.imbalance5) / 2) * 100).toFixed(1)}%"></div><div class="a" style="flex:1"></div></div>
+      <div class="split-labels"><span>Buy ${qty.format(r.bidQty5)}</span><span>Sell ${qty.format(r.askQty5)}</span></div>`}
+      <div class="stats">
+        <div class="stat"><div class="k">Spread %</div><div class="v num">${r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%'}</div></div>
+        <div class="stat"><div class="k">Spread (₹)</div><div class="v num">${r.spread == null ? '–' : '₹' + price.format(r.spread)}</div></div>
+        <div class="stat"><div class="k">Imbalance, top 5 levels</div><div class="v num ${r.imbalance5 == null ? '' : r.imbalance5 >= 0 ? 'up' : 'down'}">${signed(r.imbalance5)}</div></div>
+        <div class="stat"><div class="k">Imbalance, whole book</div><div class="v num ${r.imbalanceBook == null ? '' : r.imbalanceBook >= 0 ? 'up' : 'down'}">${signed(r.imbalanceBook)}</div></div>
+      </div>
+      <div class="chart-head"><h3>Order book depth (best 5 levels each side)</h3></div>
+      ${bookTable(r.book)}
+      <p class="note">Spread % = (best ask − best bid) ÷ their midpoint: the cost of crossing the book. Imbalance = (buy quantity − sell quantity) ÷ (buy + sell), from −1 (all sellers) to +1 (all buyers). "Whole book" uses the exchange's total buy and sell quantity across every level. Displayed orders can be cancelled at any time, so treat imbalance as a hint, not proof of buying or selling.</p>
+    </div>
+
+    <div class="metric" id="s-levels">
+      <div class="hero"><span class="big num">${r.support && r.resistance ? '₹' + price.format(r.support.price) + ' – ₹' + price.format(r.resistance.price) : r.pivots ? '₹' + price.format(r.pivots.p) : '–'}</span><span class="label">${r.support && r.resistance ? 'support – resistance range (pivot points)' : 'pivot point'}</span></div>
+      <p class="verdict">${levelsVerdict(r)}</p>
+      ${r.pivots ? `<div class="stats">
+        ${levelCard('Nearest support', r.support)}
+        ${levelCard('Nearest resistance', r.resistance)}
+        <div class="stat"><div class="k">Pivot</div><div class="v num">₹${price.format(r.pivots.p)}</div></div>
+        <div class="stat"><div class="k">Previous session H / L / C</div><div class="v num" style="font-size:14px">${price.format(r.prevDay.h)} / ${price.format(r.prevDay.l)} / ${price.format(r.prevDay.c)}</div></div>
+      </div>
+      <div class="chart-head"><h3>Price against pivot levels</h3><div class="legend"><span>Price</span></div></div>
+      ${c ? chartSvg([{ data: c.price, cls: 'l-today' }], { guides: [{ v: r.pivots.s1, label: 'S1' }, { v: r.pivots.p, label: 'Pivot' }, { v: r.pivots.r1, label: 'R1' }], format: (v) => price.format(v), label: 'Price through the session against the pivot, S1 and R1' }) : '<p class="empty">Loading chart…</p>'}
+      <div class="chart-head" style="margin-top:18px"><h3>All pivot levels</h3></div>
+      ${levelsTable(r)}` : ''}
+      <p class="note">Pivot = (previous high + low + close) ÷ 3. R1 = 2 × pivot − low, S1 = 2 × pivot − high, R2/S2 = pivot ± (high − low), R3 = high + 2 × (pivot − low), S3 = low − 2 × (high − pivot). The levels are fixed for the whole session; only the price moves. They are reference zones where price may stall or reverse, not guaranteed turning points.</p>
+    </div>
+
+    <div class="metric" id="s-swings">
+      <div class="hero"><span class="big num">${r.swingLow || r.swingHigh ? (r.swingLow ? '₹' + price.format(r.swingLow.price) : '–') + ' – ' + (r.swingHigh ? '₹' + price.format(r.swingHigh.price) : '–') : '–'}</span><span class="label">last swing low – last swing high (5-min candles)</span></div>
+      <p class="verdict">${swingVerdict(r)}</p>
+      <div class="stats">
+        ${swingCard('Last swing low (support)', r.swingLow, r.asOf)}
+        ${swingCard('Last swing high (resistance)', r.swingHigh, r.asOf)}
+      </div>
+      <div class="chart-head"><h3>Price against the last swing levels</h3><div class="legend"><span>Price</span></div></div>
+      ${c ? chartSvg([{ data: c.price, cls: 'l-today' }], { guides: [r.swingLow && { v: r.swingLow.price, label: 'Swing low' }, r.swingHigh && { v: r.swingHigh.price, label: 'Swing high' }].filter(Boolean), format: (v) => price.format(v), label: 'Price through the session against the last swing high and low' }) : '<p class="empty">Loading chart…</p>'}
+      <div class="chart-head" style="margin-top:18px"><h3>Recent swings (newest first)</h3></div>
+      ${swingTable(r)}
+      <p class="note">A swing high is a 5-minute candle whose high is the highest of 5 candles: itself and the 2 on each side. A swing low is the same with lows. The last swing high acts as resistance and the last swing low as support. A swing is only confirmed 2 candles later, so the newest one is at least 10 minutes old. These refresh every 5 minutes; the distances update live.</p>
+    </div>`;
+}
+
+async function loadCurves(sym) {
+  try {
+    const res = await fetch('/api/detail?sym=' + encodeURIComponent(sym));
+    if (!res.ok) return;
+    const d = await res.json();
+    if (sym === selected) { curves = { sym, average: d.average, today: d.today, price: d.price, vwapCurve: d.vwapCurve, trCurve: d.trCurve, atrCurve: d.atrCurve, rocCurve: d.rocCurve, rsiCurve: d.rsiCurve, emaCurve: d.emaCurve, slopeCurve: d.slopeCurve }; renderDetail(); }
+  } catch { /* server down; the socket status already says so */ }
+}
+
+function select(sym) {
+  selected = sym;
+  curves = null;
+  renderList();
+  renderDetail();
+  loadCurves(sym);
+}
+
+function applyRow(r) {
+  const prev = rows.get(r.sym);
+  rows.set(r.sym, r);
+  // Keep the chart's live point current, and reload the curves when the session day changes.
+  if (r.sym === selected && curves?.today && r.volume != null && r.asOf) {
+    if (prev?.asOf && istDay(prev.asOf) !== istDay(r.asOf)) { loadCurves(r.sym); return; }
+    const d = new Date(r.asOf + 19800000);
+    const idx = Math.floor((d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds() - 33300) / 60);
+    if (idx >= 0) {
+      const i = Math.min(idx, 374);
+      curves.today[i] = r.volume;
+      if (curves.price && r.ltp != null) curves.price[i] = r.ltp;
+      if (curves.vwapCurve && r.vwap) curves.vwapCurve[i] = r.vwap;
+    }
+  }
+}
+
+// Stock list open/closed, remembered across refreshes.
+function setSidebar(open) {
+  document.querySelector('main').classList.toggle('closed', !open);
+  $('toggle').setAttribute('aria-expanded', String(open));
+  $('toggle-text').textContent = open ? 'Hide stocks' : 'Show stocks';
+  try { localStorage.setItem('sidebarOpen', open ? '1' : '0'); } catch { /* storage unavailable */ }
+  if (typeof schedule === 'function') schedule();
+}
+$('toggle').addEventListener('click', () => setSidebar(document.querySelector('main').classList.contains('closed')));
+try { if (localStorage.getItem('sidebarOpen') === '0') setSidebar(false); } catch { /* storage unavailable */ }
+
+$('list').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-sym]');
+  if (b) select(b.dataset.sym);
+});
+
+// Honour a section link such as /#s-book once, after the first render that has data.
+let hashDone = !location.hash;
+function applyHash() {
+  if (hashDone) return;
+  const target = document.querySelector(location.hash);
+  if (target) { hashDone = true; target.scrollIntoView(); }
+}
+
+var dirty = false; // var: schedule() can be called before this line runs (restoring a closed sidebar)
+function schedule() {
+  if (dirty) return;
+  dirty = true;
+  requestAnimationFrame(() => {
+    dirty = false;
+    renderStatus();
+    renderList();
+    try {
+      renderDetail();
+    } catch (err) {
+      // Usually the page is newer than the running server, so fields it expects are missing.
+      console.error(err);
+      $('detail').innerHTML = '<p class="empty">This page is newer than the running dashboard server.<br>Stop the server (Ctrl+C) and start it again with <b>npm run dashboard</b>, then refresh.</p>';
+    }
+    applyHash();
+  });
+}
+
+let retry = 1000;
+function connect() {
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+  ws.onopen = () => { socketUp = true; retry = 1000; schedule(); };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'snapshot') {
+      order = msg.rows.map((r) => r.sym);
+      msg.rows.forEach((r) => rows.set(r.sym, r));
+      feed = msg.status;
+      if (!selected || !order.includes(selected)) select(order[0]); else loadCurves(selected);
+    } else if (msg.type === 'row') {
+      applyRow(msg.row);
+    } else if (msg.type === 'curves') {
+      if (selected) loadCurves(selected);
+    } else if (msg.type === 'status') {
+      feed = msg.status;
+    }
+    schedule();
+  };
+  ws.onclose = () => { socketUp = false; schedule(); setTimeout(connect, retry); retry = Math.min(retry * 2, 15000); };
+}
+connect();
+setInterval(renderStatus, 5000);
+window.addEventListener('resize', schedule);
+</script>
+</body>
+</html>

@@ -12,7 +12,9 @@
     "record": "node src/record.js",
     "peek": "node src/peek.js",
     "test": "node --test \"test/*.test.js\"",
-    "history": "node src/history.js"
+    "history": "node src/history.js",
+    "metrics": "node src/metrics.js",
+    "dashboard": "node src/dashboard.js"
   },
   "dependencies": {
     "fyers-api-v3": "2.4.1",

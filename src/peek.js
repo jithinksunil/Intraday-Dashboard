@@ -1,10 +1,8 @@
 // Summarises a day's recording and prints the last few records.
 // Usage: npm run peek -- <quotes|depth5|depth50|events> [--date YYYY-MM-DD] [--sym NSE:SBIN-EQ] [--n 3]
-import { createReadStream, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
-import { constants, createGunzip } from 'node:zlib';
+import { partFiles, readPart } from './lib/records.js';
 import { istClock, istDate } from './lib/time.js';
 
 const { values: args, positionals } = parseArgs({
@@ -24,27 +22,10 @@ if (!['quotes', 'depth5', 'depth50', 'events'].includes(stream)) {
 }
 
 const dir = join(args.data, args.date);
-const parts = existsSync(dir)
-  ? readdirSync(dir).filter((f) => f.startsWith(`${stream}-`) && f.endsWith('.ndjson.gz')).sort()
-  : [];
+const parts = partFiles(args.data, args.date, stream);
 if (!parts.length) {
   console.error(`No ${stream} files in ${dir}`);
   process.exit(1);
-}
-
-/** Yields records from one part; a part cut short by a crash is read up to its last flush. */
-async function* readPart(file) {
-  // Z_SYNC_FLUSH tolerates a missing gzip trailer instead of throwing.
-  const gunzip = createGunzip({ finishFlush: constants.Z_SYNC_FLUSH });
-  const lines = createInterface({ input: createReadStream(file).pipe(gunzip), crlfDelay: Infinity });
-  for await (const line of lines) {
-    if (!line) continue;
-    try {
-      yield JSON.parse(line);
-    } catch {
-      // a half-written final line in a truncated part
-    }
-  }
 }
 
 const n = Number(args.n);
@@ -52,7 +33,7 @@ const tail = [];
 const bySym = new Map();
 let total = 0;
 for (const part of parts) {
-  for await (const rec of readPart(join(dir, part))) {
+  for await (const rec of readPart(part)) {
     if (args.sym && rec.sym !== args.sym) continue;
     total++;
     const key = rec.sym ?? rec.ev ?? '?';

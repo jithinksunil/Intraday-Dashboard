@@ -77,6 +77,60 @@ up front.
 Compute indicators from these candles, not from the live recording: once-a-second snapshots
 miss highs and lows between snapshots, which makes ATR and Bollinger Bands read low.
 
+## Live dashboard
+
+```bash
+npm run dashboard
+```
+
+Then open <http://localhost:4000>. It lists the stocks in
+[config/dashboard.json](config/dashboard.json); pick one to see its real-time RVOL (relative
+volume), the volume so far against the usual volume by this time of day, and a chart of both
+through the session. Values update on every quote from the Fyers WebSocket.
+
+On start it brings each stock's 1-minute candles up to date (one request per stock once history
+is stored) and builds the baseline: the average cumulative volume at each minute over the last
+20 full sessions. RVOL = today's volume so far / that average at the current time.
+
+- Needs a valid token (`npm run login`), like the recorder. Running it at the same time as the
+  recorder has not been tried yet; both together stay well under the 100-symbol limit.
+- Outside market hours it shows the last session's final values and says so.
+- Live volume comes from the feed's day total, which includes pre-open and post-close trades
+  that the 1-minute candles leave out. That makes RVOL read a little high: about 2% at the end
+  of the day, more in the first minutes after the open.
+- The server listens on localhost only. `--port 4001` changes the port.
+
+## Calculating the metrics
+
+```bash
+npm run metrics
+```
+
+Prints the Phase 1-3 metrics for every watchlist symbol and writes all values to
+`data/metrics/latest.json`. Indicators run on 5-minute candles built from the stored 1-minute
+candles (`--tf 15` for another timeframe) and use completed candles only.
+
+- **Market (Phase 1):** ATR, relative ATR, EMA slope %, ROC, RSI, ADX with +DI/-DI, India VIX,
+  sector strength vs Nifty, a regime label, and breadth across the watchlist stocks.
+- **Stock selection (Phase 2):** RVOL by time of day, ATR %, relative ATR, average traded value,
+  strength vs Nifty and vs sector, correlation with Nifty, spread %, order-book imbalance.
+- **Entry and levels (Phase 3, 6):** EMA, RSI, ROC, MACD, VWAP and deviation in ATRs, Bollinger
+  Bands, pivots, swing support/resistance, volume profile (POC/VAH/VAL), Chandelier exit levels.
+
+Spread and order-book columns come from the latest recording and stay empty unless it was made
+during market hours. Stock-to-sector mapping is in [config/sectors.json](config/sectors.json).
+
+The maths lives in two libraries you can import from your own strategy code:
+
+- [src/lib/indicators.js](src/lib/indicators.js): every indicator above, plus anchored VWAP.
+- [src/lib/risk.js](src/lib/risk.js): position sizing, ATR stops, reward:risk, R-multiple,
+  MFE/MAE, and a trade-list summary (win rate, expectancy, profit factor, max drawdown,
+  Sharpe/Sortino per trade, streaks). These need trades, so nothing prints them yet.
+
+All periods (EMA 20, RSI 14, ATR 14, ...) and the regime thresholds (ADX 25, relative ATR
+0.7/1.3) are conventional defaults, not tested settings. Volume profile is an approximation
+from candles, and breadth covers only the watchlist, not the whole market.
+
 ## Looking at the data
 
 ```bash
