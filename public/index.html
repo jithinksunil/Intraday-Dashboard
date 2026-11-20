@@ -152,6 +152,12 @@
   .tile.rated.bad, .tile.rated.sell { border-left-color: var(--down); }
   .tile.rated.buy { border-left-color: var(--up); }
   .tile.rated.neutral { border-left-color: var(--muted); }
+  .zones { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .zone { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .zone-kind { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .zone-range { font-size: 18px; font-weight: 650; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+  .zone ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .zone-text { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
   .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .tile-verdict { margin: 10px 0 0; font-size: 13px; }
   .back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
@@ -324,12 +330,45 @@ function chartSvg(lines, { fromZero, format, label, range, guides = [] }) {
 }
 
 const fmtAtr = (v) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + ' ATR');
+// How a normalized VWAP deviation is used: which kind of setup it is a candidate for.
+// Each returns the zones that apply, as { kind, tag, tone, range, points }.
+function vwapZones(d) {
+  if (d == null) return [];
+  if (Math.abs(d) <= 0.5) return [{ kind: 'No-trade / neutral zone', tag: null, tone: 'neutral', range: '−0.5 to +0.5', points: ['Price is close to VWAP.', 'Avoid treating small deviations as meaningful opportunities.'] }];
+  const below = d < 0;
+  const side = below ? 'below' : 'above';
+  const zones = [];
+  if (Math.abs(d) > 1.5) {
+    zones.push({ kind: 'Mean-reversion candidate', tag: 'Watch for reversal', tone: 'excellent', range: (below ? 'Below −1.5' : 'Above +1.5'), points: [
+      `Price is significantly ${side} VWAP.`,
+      `Look for weakening ${below ? 'selling' : 'buying'} pressure.`,
+      `Check absorption and ${below ? 'buying' : 'selling'} response.`,
+      'Wait for reversal confirmation.',
+    ] });
+  }
+  if (Math.abs(d) > 1) {
+    zones.push({ kind: 'Momentum candidate', tag: 'Watch for continuation', tone: 'good', range: (below ? 'Below −1.0' : 'Above +1.0'), points: [
+      `Price is ${side} VWAP.`,
+      `${below ? 'Downward' : 'Upward'} trend is confirmed.`,
+      `${below ? 'Selling' : 'Buying'} pressure persists.`,
+      `Look for ${below ? 'bearish' : 'bullish'} continuation rather than ${below ? 'buying' : 'selling'} simply because price is extended.`,
+    ] });
+  }
+  return zones;
+}
 function stretchVerdict(d) {
   if (d == null) return '';
-  const a = Math.abs(d);
-  if (a < 1) return 'That is within one ATR, close to VWAP.';
-  if (a < 2) return 'That is a moderate distance: between one and two ATRs.';
-  return 'That is a stretched distance: more than two ATRs.';
+  const c = rateVwapDev(d);
+  return `${rate('vwapInterp', d).label} (${fmtAtr(d)}): ${c.label.toLowerCase()}, ${c.text.toLowerCase()}.`;
+}
+function zonesHtml(d) {
+  const zones = vwapZones(d);
+  if (!zones.length) return d == null ? '' : '<div class="zone"><div class="zone-kind">No setup zone</div><p class="zone-text">Between ±0.5 and ±1.0: outside the neutral zone, but not yet a momentum or mean-reversion candidate.</p></div>';
+  return zones.map((z) => `<div class="zone">
+      <div class="zone-kind">${z.kind} ${z.tag ? `<span class="badge ${z.tone}">${z.tag}</span>` : ''}</div>
+      <div class="zone-range">${z.range}</div>
+      <ul>${z.points.map((p) => `<li>${p}</li>`).join('')}</ul>
+    </div>`).join('');
 }
 
 const qty = new Intl.NumberFormat('en-IN');
@@ -461,6 +500,26 @@ const RATINGS = {
     { upTo: 70, grade: 'buy', label: 'Normal bullish ↑', text: 'normal bullish momentum, upward' },             // 60 to 70
     { upTo: Infinity, grade: 'buy', label: 'Strong bullish ↑', text: 'strong bullish momentum, upward' },       // above 70
   ],
+  // Normalized VWAP deviation = (price - VWAP) / ATR. Initial research thresholds, not validated levels.
+  // Classification by absolute deviation (how far from VWAP, either side). Rate with Math.abs(value).
+  vwapDevAtr: [
+    { below: 0.5, grade: 'neutral', label: 'Avoid', text: 'No deviation-based setup' },                          // below 0.5
+    { below: 1, grade: 'average', label: 'Moderate', text: 'Lower priority' },                                    // 0.5 to under 1.0
+    { upTo: 1.5, grade: 'verygood', label: 'Good candidate', text: 'Evaluate setup' },                            // 1.0 to 1.5
+    { upTo: Infinity, grade: 'excellent', label: 'Excellent candidate', text: 'Strongly consider for evaluation' }, // greater than 1.5
+  ],
+  // Plain description of where price sits relative to VWAP (signed value); shown as a caption, not a tag.
+  vwapInterp: [
+    { below: -2, grade: 'sell', label: 'Extremely extended below VWAP' },
+    { below: -1.5, grade: 'sell', label: 'Strongly extended below VWAP' },
+    { below: -1, grade: 'sell', label: 'Significantly below VWAP' },
+    { below: -0.5, grade: 'sell weak', label: 'Moderately below VWAP' },
+    { upTo: 0.5, grade: 'neutral', label: 'Close to VWAP' },
+    { upTo: 1, grade: 'buy weak', label: 'Moderately above VWAP' },
+    { upTo: 1.5, grade: 'buy', label: 'Significantly above VWAP' },
+    { upTo: 2, grade: 'buy', label: 'Strongly extended above VWAP' },
+    { upTo: Infinity, grade: 'buy', label: 'Extremely extended above VWAP' },
+  ],
   // A direction, not a quality: which side has more visible quantity in the book.
   imbalance: [
     { upTo: -1e-9, grade: 'sell', label: 'More visible selling' }, // negative
@@ -472,6 +531,7 @@ function rate(metric, value) {
   if (value == null || !RATINGS[metric]) return null;
   return RATINGS[metric].find((band) => (band.below != null ? value < band.below : value <= band.upTo)) ?? null;
 }
+const rateVwapDev = (v) => (v == null ? null : rate('vwapDevAtr', Math.abs(v)));
 const badge = (rating) => (rating ? `<span class="badge ${rating.grade}">${rating.label}</span>` : '');
 
 // Execution plan for a long trade entered at the last price.
@@ -529,13 +589,15 @@ function renderDetail() {
         <div class="stat"><div class="k">Last price</div><div class="v num">₹${fmt(price, r.ltp)}</div></div>
         <div class="stat"><div class="k">VWAP deviation (%)</div><div class="v num ${r.vwapDevPct == null ? '' : r.vwapDevPct >= 0 ? 'up' : 'down'}">${r.vwapDevPct == null ? '–' : (r.vwapDevPct >= 0 ? '+' : '') + r.vwapDevPct.toFixed(2) + '%'}</div></div>
         <div class="stat"><div class="k">VWAP deviation (₹)</div><div class="v num">${r.vwap == null ? '–' : (r.ltp - r.vwap >= 0 ? '+' : '−') + '₹' + price.format(Math.abs(r.ltp - r.vwap))}</div></div>
-        <div class="stat"><div class="k">Normalized VWAP deviation</div><div class="v num ${r.vwapDevAtr == null ? '' : r.vwapDevAtr >= 0 ? 'up' : 'down'}">${fmtAtr(r.vwapDevAtr)}</div></div>
+        <div class="stat"><div class="k">Normalized VWAP deviation</div><div class="v num ${r.vwapDevAtr == null ? '' : r.vwapDevAtr >= 0 ? 'up' : 'down'}">${fmtAtr(r.vwapDevAtr)}</div><div class="k">${badge(rateVwapDev(r.vwapDevAtr))} ${r.vwapDevAtr == null ? '' : rateVwapDev(r.vwapDevAtr).text}</div><div class="k">${r.vwapDevAtr == null ? '' : rate('vwapInterp', r.vwapDevAtr).label}</div><div class="k">range: &lt; 0 below VWAP · 0 at VWAP · &gt; 0 above VWAP</div></div>
         <div class="stat"><div class="k">5-minute ATR</div><div class="v num">${r.atr5 == null ? '–' : '₹' + price.format(r.atr5)}</div></div>
       </div>
+      <div class="chart-head"><h3>How to use the normalized deviation right now</h3></div>
+      <div class="zones">${zonesHtml(r.vwapDevAtr)}</div>
       <div class="chart-head"><h3>Price and VWAP through the session</h3>
         <div class="legend"><span>Price</span><span class="vw">VWAP</span></div></div>
       ${c ? chartSvg([{ data: c.vwapCurve, cls: 'l-vwap' }, { data: c.price, cls: 'l-today' }], { fromZero: false, format: (v) => price.format(v), label: 'Price against VWAP through the session' }) : '<p class="empty">Loading chart…</p>'}
-      <p class="note">VWAP is the average price paid today, weighted by volume. It comes from the exchange feed and resets each morning. Normalized VWAP deviation = (price − VWAP) ÷ 5-minute ATR(14), so it shows the distance in units of the stock's own recent movement.</p>
+      <p class="note">VWAP is the average price paid today, weighted by volume. It comes from the exchange feed and resets each morning. Normalized VWAP deviation = (price − VWAP) ÷ 5-minute ATR(14), so it shows the distance in units of the stock's own recent movement. 0 is the base: price exactly at VWAP. It can be less than 0 (price below VWAP) or greater than 0 (price above VWAP), with no fixed limit either way. Classification by distance from VWAP, either side: below 0.5 avoid (no deviation-based setup) · 0.5–1.0 moderate (lower priority) · 1.0–1.5 good candidate (evaluate setup) · above 1.5 excellent candidate (strongly consider for evaluation). Ranges: within ±0.5 close to VWAP (no-trade zone) · 0.5–1.0 moderately · 1.0–1.5 significantly · 1.5–2.0 strongly extended · beyond 2.0 extremely extended, above or below. Beyond ±1.0 is a momentum candidate; beyond ±1.5 is also a mean-reversion candidate. These are initial research thresholds, not validated trading levels.</p>
     </div>
 
     <div class="metric" id="s-volatility">
@@ -670,7 +732,7 @@ function renderDetail() {
     ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'base 1× = usual · below 1 quieter · above 1 busier · never below 0', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`, rate('rvol', r.rvol)],
     ['s-vwap', 'VWAP', rupee(r.vwap), '', 'average price traded today', `VWAP = Σ(price × volume) ÷ Σ(volume) for today's trades (taken from the exchange feed)`],
     ['s-vwap', 'VWAP deviation', pct(r.vwapDevPct), tone(r.vwapDevPct), r.vwap == null ? '' : signed(r.ltp - r.vwap) + ' ₹ from VWAP', `VWAP deviation % = (last price − VWAP) ÷ VWAP × 100`],
-    ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'distance from VWAP in ATRs', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`],
+    ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'base 0 = at VWAP · &lt; 0 below VWAP · &gt; 0 above VWAP', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`, rateVwapDev(r.vwapDevAtr)],
     ['s-volatility', 'True range', rupee(r.tr5), '', 'last 5-min candle', `True range = max(high − low, |high − previous close|, |low − previous close|) of the last completed 5-minute candle`],
     ['s-volatility', 'ATR', rupee(r.atr5), '', '14 candles, 5-min', `ATR = Wilder average of true range over 14 five-minute candles: ATR = (previous ATR × 13 + true range) ÷ 14`],
     ['s-volatility', 'ATR %', r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%', '', 'ATR as a share of price', `ATR % = ATR ÷ last price × 100`],
