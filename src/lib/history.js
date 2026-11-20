@@ -115,7 +115,9 @@ export const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class FatalHistoryError extends Error {}
 
-const isRateLimited = (r) => r?.code === -429 || r?.code === 429 || /rate limit|too many requests/i.test(r?.message ?? '');
+// Fyers words the Standard-plan overage as "reached the Standard plan limit of 50 requests/minute".
+const isRateLimited = (r) =>
+  r?.code === -429 || r?.code === 429 || /rate limit|too many requests|plan limit|requests\/(second|minute|day)/i.test(r?.message ?? '');
 // Matched on the message: Fyers' numeric auth error codes aren't documented clearly enough to rely on.
 const isAuthError = (r) => [401, 403].includes(r?.code) || /token|unauthori[sz]ed|authenticat/i.test(r?.message ?? '');
 const isNetworkError = (r) => typeof r?.message === 'string' && /^E[A-Z]+$/.test(r.message); // ECONNRESET, ETIMEDOUT, ...

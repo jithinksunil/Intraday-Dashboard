@@ -140,6 +140,13 @@ test('a second sync resumes from the last stored candle', async () => {
   assert.equal(s.store.read(SYM, '1m').at(-1).t, ist('2026-11-18T12:09:00'));
 });
 
+test("Fyers' plan-limit wording counts as rate limiting, not a skipped range", async () => {
+  const s = setup([{ s: 'error', code: 500, message: "You've reached the Standard plan limit of 50 requests/minute. Upgrade to Prime for higher API limits." }]);
+  const r = await syncSymbol({ ...s, symbol: SYM, res: '1m', fromSec: NOW - DAY, nowSec: NOW, sleep: s.clock.sleep });
+  assert.equal(s.state.rateLimitHits, 1);
+  assert.equal(r.skippedChunks, 0);
+});
+
 test('one rate-limit response waits 65 s and retries; a second stops the run', async () => {
   const s = setup([{ s: 'error', code: -429, message: 'request limit reached' }]);
   await syncSymbol({ ...s, symbol: SYM, res: '1m', fromSec: NOW - DAY, nowSec: NOW, sleep: s.clock.sleep });

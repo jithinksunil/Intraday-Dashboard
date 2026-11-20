@@ -5,3 +5,9 @@ data/
 logs/
 *.log
 .DS_Store
+
+# Intraday Learning: only scripts and Markdown are tracked. Downloaded and generated data stays local.
+Intraday Learning/StockSelection/scan-results/*
+!Intraday Learning/StockSelection/scan-results/result.md
+Intraday Learning/StrategyEntry/indicator-results/*
+!Intraday Learning/StrategyEntry/indicator-results/*.md

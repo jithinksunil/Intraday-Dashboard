@@ -14,7 +14,8 @@
     "test": "node --test \"test/*.test.js\"",
     "history": "node src/history.js",
     "metrics": "node src/metrics.js",
-    "dashboard": "node src/dashboard.js"
+    "dashboard": "node src/dashboard.js",
+    "scan": "node \"Intraday Learning/StockSelection/scan-intraday.js\""
   },
   "dependencies": {
     "fyers-api-v3": "2.4.1",
