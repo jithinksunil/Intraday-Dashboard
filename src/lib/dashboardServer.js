@@ -1,5 +1,5 @@
 // HTTP + WebSocket server for the dashboard. Serves the page, a snapshot API, and pushes rows
-// to browsers as quotes arrive. Listens on localhost only.
+// to browsers as quotes arrive. Listens on localhost unless a host is given (--lan in dashboard.js).
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
@@ -31,7 +31,7 @@ export function createDashboardServer({ engine, pagePath = 'public/index.html', 
     broadcast(msg) {
       for (const ws of wss.clients) send(ws, msg);
     },
-    listen: (port) => new Promise((resolve) => server.listen(port, '127.0.0.1', resolve)),
+    listen: (port, host = '127.0.0.1') => new Promise((resolve) => server.listen(port, host, resolve)),
     close: () => new Promise((resolve) => {
       for (const ws of wss.clients) ws.terminate();
       wss.close();

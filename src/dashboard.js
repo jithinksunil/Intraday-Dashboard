@@ -2,8 +2,10 @@
 // symbols (needed for the RVOL baseline), then subscribes to live quotes and pushes RVOL to the
 // browser on every update.
 //
-// Usage: npm run dashboard [-- --port 4000] [--config config/dashboard.json] [--data data]
+// Usage: npm run dashboard [-- --port 4000] [--lan] [--config config/dashboard.json] [--data data]
+// --lan also serves other devices on the same network (phone on the same Wi-Fi); default is this machine only.
 import { readFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import fyers from 'fyers-api-v3';
@@ -19,6 +21,7 @@ import { loadToken } from './lib/token.js';
 const { values: args } = parseArgs({
   options: {
     port: { type: 'string', default: '4000' },
+    lan: { type: 'boolean', default: false },
     config: { type: 'string', default: 'config/dashboard.json' },
     data: { type: 'string', default: 'data' },
   },
@@ -158,8 +161,12 @@ dash.server.on('error', (err) => {
   console.error(err.code === 'EADDRINUSE' ? `Port ${port} is in use. Try: npm run dashboard -- --port ${port + 1}` : err.message);
   process.exit(1);
 });
-await dash.listen(port);
+await dash.listen(port, args.lan ? '0.0.0.0' : '127.0.0.1');
 log(`dashboard at http://localhost:${port}`);
+if (args.lan) {
+  const addrs = Object.values(networkInterfaces()).flat().filter((a) => a.family === 'IPv4' && !a.internal);
+  for (const a of addrs) log(`on your network: http://${a.address}:${port}`);
+}
 
 const stop = async () => {
   clearInterval(refresher);
