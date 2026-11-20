@@ -1,7 +1,7 @@
 # Intraday Stock Selection — Scan Results
 
 **Session:** 2026-11-20, through 15:30 IST (completed session).
-**Scanned at:** 20 Nov 2026, 5:33 pm IST, market closed.
+**Scanned at:** 20 Nov 2026, 7:44 pm IST, market closed.
 **Source:** Fyers API v3 (history, quotes, depth); Nifty 100 constituents.
 **Nifty 50 over the same window:** +1.12%.
 

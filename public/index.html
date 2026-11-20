@@ -46,6 +46,7 @@
   #toggle:hover { background: var(--hover); }
   #toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 16px 5px; color: var(--muted); font-size: 12px; font-weight: 600; }
   #list { list-style: none; margin: 0; padding: 6px; }
   #list button {
     width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center;
@@ -273,7 +274,10 @@
   </div>
 </header>
 <main>
-  <nav class="panel" id="stocks" aria-label="Stocks"><ul id="list"></ul></nav>
+  <nav class="panel" id="stocks" aria-label="Stocks">
+    <div class="list-head"><span id="list-title">Stocks</span><span class="info how" data-key="sel:0" role="button" aria-label="How the stocks are selected">?</span></div>
+    <ul id="list"></ul>
+  </nav>
   <section class="panel" id="detail" aria-live="polite"><p class="empty">Waiting for data…</p></section>
 </main>
 <div id="tooltip" role="tooltip"></div>
@@ -309,6 +313,7 @@ function verdict(v) {
 
 function renderStatus() {
   const el = $('status');
+  $('list-title').textContent = feed.selection?.source === 'scan' ? 'Selected stocks' : 'Stocks';
   const newest = Math.max(0, ...[...rows.values()].map((r) => r.asOf ?? 0));
   el.className = '';
   if (!socketUp) { el.textContent = 'Dashboard server not reachable. Retrying…'; el.className = 'down'; return; }
@@ -1791,6 +1796,56 @@ function guideHtml(title) {
     <div class="tt-h">Keep in mind</div>${list(g.mind)}`;
 }
 
+// The side panel's "?": the general rules of the stock-selection scan (Intraday Learning/
+// StockSelection/scan-intraday.js). Thresholds come from the server when the scan ran, so the
+// text follows the settings actually used; otherwise the scanner's defaults are shown.
+function selectionHtml() {
+  const sel = feed.selection ?? {};
+  const c = { minTurnoverCrore: 20, minAtrPct: 1, minRvol: 1.5, maxSpreadPct: 0.1, rvolDays: 10, baselineDays: 20, ...(sel.config ?? {}) };
+  const rowsHtml = (items) => `<dl class="tt-rows">${items.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+  const list = (items) => `<ul class="tt-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+  const source = sel.source === 'scan'
+    ? `This list: the top ${sel.shown} of ${sel.matched} stocks that passed, out of ${sel.evaluated} evaluated, from the ${sel.session} session.`
+    : 'This list is the fixed one from config/dashboard.json: the scan was skipped, failed, or selected nothing, so the rules below were not applied to it.';
+  return `<div class="tt-h">What it does</div>
+    <p class="tt-p">Each time the dashboard starts, it scans the Nifty 100 stocks for the latest completed trading session and keeps the ones that are liquid, volatile enough and unusually active. Those are ranked by a score and the best are listed here, highest score first. The list stays the same until the dashboard is restarted on a later day.</p>
+    <div class="tt-h">Step 1 · Filters (a stock must pass all)</div>
+    ${rowsHtml([
+      ['Liquidity', `Average traded value over the last ${c.baselineDays} sessions is at least ₹${c.minTurnoverCrore} crore.`],
+      ['Volatility', `Daily ATR(14) is at least ${c.minAtrPct}% of the previous close.`],
+      ['Unusual volume', `RVOL is at least ${c.minRvol}: the session's volume against the average of the previous ${c.rvolDays} sessions.`],
+      ['Spread', `Bid-ask spread is at most ${c.maxSpreadPct}% of the price. Checked only when the scan runs while the market is open; the start-up scan uses a finished session, so this filter is skipped.`],
+    ])}
+    <div class="tt-h">Step 2 · Score, 0 to 100 (ranks the stocks that passed)</div>
+    ${rowsHtml([
+      ['RVOL · up to 40', 'More points the higher the volume is against normal, up to RVOL 5.'],
+      ['Relative ATR · 20, 10 or 0', '20 when the session\'s range is 1.2 to 2 times the stock\'s normal range; 10 for 0.8 to 1.2 or 2 to 3; 0 when quieter or more extreme than that.'],
+      ['Strength vs Nifty · up to 25', 'How far the stock\'s day change is from Nifty 50\'s, in either direction, up to 3 percentage points. Lagging the index scores the same as leading it.'],
+      ['Spread · 15, 10 or 0', '15 for 0.05% or tighter, 10 for up to 0.10%, 0 if wider or not checked. No stock gets these points from the start-up scan, so 85 is the most it can award.'],
+    ])}
+    <div class="tt-h">How each measure is calculated</div>
+    <div class="tt-eq"><b>Traded value</b> = average of (close × volume) over the last ${c.baselineDays} sessions</div>
+    <div class="tt-eq"><b>ATR%</b> = ATR(14) on daily candles ÷ previous close × 100</div>
+    <div class="tt-eq"><b>RVOL</b> = session volume ÷ average volume of the previous ${c.rvolDays} sessions</div>
+    <div class="tt-eq"><b>Relative ATR</b> = session true range ÷ average true range of the previous ${c.baselineDays} sessions</div>
+    <div class="tt-eq"><b>Strength vs Nifty</b> = stock day change % − Nifty 50 day change %</div>
+    <div class="tt-eq"><b>Spread %</b> = (ask − bid) ÷ ((ask + bid) ÷ 2) × 100</div>
+    <div class="tt-h">Not used in the selection</div>
+    ${list([
+      'Gap %, change from open, and strength against stocks in the same industry are calculated and saved in the scan report, but do not filter or rank.',
+      'Order-book depth, volume profile, news, and limits on how many stocks come from one sector are not checked.',
+      'The live readings on this dashboard (RVOL now, order flow, VWAP and the rest) play no part in which stocks are listed.',
+    ])}
+    <div class="tt-h">Keep in mind</div>
+    ${list([
+      'The list reflects the previous session\'s activity. A stock that was busy yesterday may be quiet today; check its live RVOL here.',
+      'Sessions with under a fifth of normal volume, such as Muhurat trading, are left out of the averages.',
+      'The filter thresholds come from the strategy notes. The score weights are starting values and have not been backtested.',
+      'Selection is a watchlist, not a signal to trade.',
+    ])}
+    <p class="tt-key">${source} Full results: Intraday Learning/StockSelection/scan-results/result.md.</p>`;
+}
+
 // One tooltip for all info icons. It lives outside the tiles, which are redrawn on every quote,
 // so it stays put while the numbers behind it change.
 let tileInfo = [];
@@ -1814,10 +1869,15 @@ function showTip(icon) {
   const [kind, n] = key.split(':');
   const info = tileInfo[Number(n)];
   const tip = $('tooltip');
-  if (!info) return;
-  const guide = kind === 'how';
+  const sel = kind === 'sel'; // the side panel's "?"
+  if (!info && !sel) return;
+  const guide = kind === 'how' || sel;
+  document.querySelector('#stocks .info.on')?.classList.remove('on');
+  if (sel) icon.classList.add('on');
   if (tipFor !== key) {
-    tip.innerHTML = guide
+    tip.innerHTML = sel
+      ? `<div class="tt-kicker">How the stocks are selected</div><div class="tt-title">Stock selection</div>${selectionHtml()}`
+      : guide
       ? `<div class="tt-kicker">How to interpret</div><div class="tt-title">${info.title}</div>${guideHtml(info.title)}`
       : `<div class="tt-kicker">How it's calculated</div><div class="tt-title">${info.title}</div>${formulaHtml(info.formula)}`;
     tip.classList.toggle('guide', guide);
@@ -1848,7 +1908,7 @@ function hideTip() {
   if (tipFor == null) return;
   tipFor = null;
   $('tooltip').classList.remove('show');
-  document.querySelector('.info.on')?.classList.remove('on');
+  document.querySelectorAll('.info.on').forEach((el) => el.classList.remove('on'));
 }
 // Click the icon to open its tooltip; click it again, click anywhere else, or press Escape to close.
 document.addEventListener('click', (e) => {

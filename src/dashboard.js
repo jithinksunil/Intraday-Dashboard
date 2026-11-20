@@ -62,6 +62,8 @@ const limiter = new RateLimiter({ perMinute: 40, perSecond: 3 });
 const historyState = { requests: 0, rateLimitHits: 0 };
 
 // Stock selection: the scan's matches, best score first, replace the fixed config list.
+// `selection` tells the page where its list came from, for the side panel's "?" explanation.
+let selection = { source: 'config' };
 if (!args['no-scan']) {
   log('selecting stocks from the latest completed session (about 3 minutes if not scanned since the close)...');
   try {
@@ -70,6 +72,7 @@ if (!args['no-scan']) {
     const picked = report.matches.slice(0, Number(args.top)).map((row) => row.fyers);
     if (picked.length) {
       symbols = picked;
+      selection = { source: 'scan', session: report.session, matched: report.matchedCount, shown: picked.length, evaluated: report.evaluatedCount, config: report.config };
       log(`showing ${picked.length} of ${report.matchedCount} stocks selected from the ${report.session} session`);
     } else {
       log(`the scan selected no stocks for ${report.session}; showing the list in ${args.config}`);
@@ -112,7 +115,7 @@ try {
   process.exit(1);
 }
 
-const status = { feed: 'connecting', since: Date.now() };
+const status = { feed: 'connecting', since: Date.now(), selection };
 const engine = new RvolEngine({
   symbols,
   loadCandles: (sym) => store.read(sym, '1m'),

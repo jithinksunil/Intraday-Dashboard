@@ -94,7 +94,8 @@ The selection takes about 3 minutes when that session has not been scanned yet, 
 when it has (for example after `npm run scan` the evening before). The list is fixed for the
 day; restarting the dashboard during the session keeps the same stocks. `--no-scan` shows the
 fixed list in [config/dashboard.json](config/dashboard.json) instead, which is also used if
-the scan fails or selects nothing.
+the scan fails or selects nothing. The **?** at the top of the stock list explains the selection
+rules and says which of the two lists is showing.
 
 On start it brings each stock's 1-minute candles up to date (one request per stock once history
 is stored) and builds the baseline: the average cumulative volume at each minute over the last
