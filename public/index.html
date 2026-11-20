@@ -138,6 +138,23 @@
   #tooltip .tt-eq + .tt-eq { margin-top: 6px; }
   #tooltip .tt-eq b { color: var(--accent); font-weight: 600; }
   #tooltip .tt-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  /* Two buttons per tile: "?" how to interpret, "i" how it's calculated. */
+  .tile-title .icons { display: inline-flex; gap: 9px; flex: none; margin-left: 8px; }
+  .icons .info::after { inset: -11px -4px; }
+  .info.how { font-style: normal; font-family: inherit; font-size: 11.5px; }
+  /* The interpretation tooltip is longer: wider, scrollable, and it can be touched and scrolled. */
+  #tooltip.guide { width: min(440px, calc(100vw - 24px)); max-width: none; pointer-events: auto; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  #tooltip.guide::before { display: none; }
+  #tooltip .tt-h { color: var(--accent); font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin: 12px 0 5px; }
+  #tooltip .tt-title + .tt-h { margin-top: 0; }
+  #tooltip .tt-p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+  #tooltip .tt-rows { margin: 0; display: grid; grid-template-columns: minmax(96px, 34%) 1fr; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); font-size: 12px; line-height: 1.45; }
+  #tooltip .tt-rows dt, #tooltip .tt-rows dd { margin: 0; padding: 6px 9px; border-top: 1px solid var(--line); }
+  #tooltip .tt-rows dt:first-of-type, #tooltip .tt-rows dt:first-of-type + dd { border-top: 0; }
+  #tooltip .tt-rows dt { font-weight: 650; }
+  #tooltip .tt-rows dd { color: var(--text); border-left: 1px solid var(--line); }
+  #tooltip .tt-list { margin: 0; padding-left: 17px; font-size: 12.5px; line-height: 1.5; }
+  #tooltip .tt-list li + li { margin-top: 3px; }
   @media (prefers-reduced-motion: reduce) { #tooltip { transition: none; transform: none; } }
   .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 650; letter-spacing: .01em; vertical-align: middle; border: 1px solid currentColor; background: color-mix(in srgb, currentColor 13%, transparent); }
   .badge.excellent { color: var(--up); }
@@ -929,7 +946,7 @@ function renderDetail() {
   tileInfo = TILES.map(([, title, , , , formula]) => ({ title, formula }));
   // One group per section: a heading, then that section's tiles on their own row(s).
   const tile = ([id, title, value, cls, sub, , rating], n) => `<a class="tile ${rating ? 'rated ' + rating.grade : ''}" href="#${id}">
-      <div class="tile-title">${title}<span class="info" data-n="${n}" role="button" aria-label="Show the formula for ${title}">i</span></div>
+      <div class="tile-title">${title}<span class="icons"><span class="info how" data-key="how:${n}" role="button" aria-label="How to interpret ${title}">?</span><span class="info" data-key="i:${n}" role="button" aria-label="Show the formula for ${title}">i</span></span></div>
       <div class="tile-value ${cls}">${value}</div>
       <div class="tile-label">${sub || '&nbsp;'}</div>
       ${rating ? `<div class="tile-rating">${badge(rating)}</div>` : ''}
@@ -939,7 +956,7 @@ function renderDetail() {
       <div class="tiles">${TILES.map((t, n) => (t[0] === id ? tile(t, n) : '')).join('')}</div>
     </section>`).join('');
   el.innerHTML = `${header}${groups}`;
-  if (tipFor != null) el.querySelector(`.info[data-n="${tipFor}"]`)?.classList.add('on');
+  if (tipFor != null) el.querySelector(`.info[data-key="${tipFor}"]`)?.classList.add('on');
 }
 
 async function loadCurves(sym) {
@@ -1003,6 +1020,624 @@ $('list').addEventListener('click', (e) => {
   if (b) select(b.dataset.sym);
 });
 
+// ----- "How to interpret" text for each overview tile, keyed by the tile's title. -----
+// what: what the number tells you. read: [value or tag, meaning]. use: what to check it against. mind: limits.
+const GUIDE = {
+  'Sell volume share': {
+    what: 'Of all the shares traded in the last 15 minutes, the percentage where the seller was the impatient side and sold at the buyer\'s price. The rest was bought by impatient buyers. It shows which side is in control right now.',
+    read: [
+      ['Above 60%', 'Strong selling dominance. Sellers are clearly in control.'],
+      ['55% to 60%', 'Moderate selling dominance. Sellers have the edge.'],
+      ['45% to 55%', 'Balanced. Neither side is in control; no lean.'],
+      ['40% to 45%', 'Moderate buying dominance. Buyers have the edge.'],
+      ['Below 40%', 'Strong buying dominance. Buyers are clearly in control.'],
+    ],
+    use: [
+      'Sell and Buy volume change: is the side in control also speeding up, or slowing down?',
+      'CVD trend: has this lasted 30 minutes, or is it a short burst?',
+      'Price: selling dominance while price holds means buyers are absorbing it. Selling dominance while price falls confirms the downtrend.',
+    ],
+    mind: [
+      'Estimated from about one snapshot a second, not from individual trades.',
+      'Fifteen minutes is short. One very large trade can swing it.',
+      'Shows "collecting" until 15 minutes of unbroken live data exist.',
+    ],
+  },
+  'Sell volume change': {
+    what: 'Whether aggressive selling is growing or fading. It compares the sell volume of the last 15 minutes with the sell volume of the 15 minutes before that.',
+    read: [
+      ['Above +20%', 'Selling pressure increasing. Sellers are getting more aggressive.'],
+      ['−20% to +20%', 'Selling pressure flat. No real change.'],
+      ['Below −20%', 'Selling pressure decreasing. Sellers are backing off.'],
+      ['Sell up, buy flat or down', 'Selling is strengthening. A falling price is likely to keep falling.'],
+      ['Sell down, buy flat or up', 'Selling is fading and buyers are taking over. A downtrend may be weakening.'],
+      ['Both up', 'More activity on both sides. No lean by itself.'],
+      ['Both down', 'Activity is drying up on both sides.'],
+    ],
+    use: [
+      'Buy volume change: always read the two side by side. What matters is which side changed more.',
+      'Total volume change (inside the Order Flow section): if the whole market is quieter, both sides fall together.',
+      'Sell volume share: tells you who is ahead; this tells you who is accelerating.',
+    ],
+    mind: [
+      'Volume normally falls from morning into midday, so "decreasing" on both sides is common and not a signal.',
+      'Estimated, like every order-flow value.',
+      'Needs 30 minutes of unbroken live data.',
+    ],
+  },
+  'Buy volume change': {
+    what: 'Whether aggressive buying is growing or fading. It compares the buy volume of the last 15 minutes with the buy volume of the 15 minutes before that.',
+    read: [
+      ['Above +20%', 'Buying pressure increasing. Buyers are getting more aggressive.'],
+      ['−20% to +20%', 'Buying pressure flat. No real change.'],
+      ['Below −20%', 'Buying pressure decreasing. Buyers are backing off.'],
+      ['Buy up, sell flat or down', 'Buying is strengthening. A rising price is likely to keep rising.'],
+      ['Buy down, sell flat or up', 'Buying is fading and sellers are taking over. An uptrend may be weakening.'],
+      ['Both up', 'More activity on both sides. No lean by itself.'],
+      ['Both down', 'Activity is drying up on both sides.'],
+    ],
+    use: [
+      'Sell volume change: always read the two side by side. What matters is which side changed more.',
+      'Ask quantity trend: buying up while ask quantity reduces means buyers are clearing the sellers overhead.',
+      'Total volume change (inside the Order Flow section) for the overall level of activity.',
+    ],
+    mind: [
+      'Volume normally falls from morning into midday, so "decreasing" on both sides is common and not a signal.',
+      'Estimated, like every order-flow value.',
+      'Needs 30 minutes of unbroken live data.',
+    ],
+  },
+  'CVD': {
+    what: 'Cumulative Volume Delta: a running total of aggressive buying minus aggressive selling since the server started watching today. It shows which side has done more of the pushing over the session.',
+    read: [
+      ['Positive', 'More shares were bought aggressively than sold. Buyers have led so far.'],
+      ['Negative', 'More shares were sold aggressively than bought. Sellers have led so far.'],
+      ['Getting larger', 'The leading side is still pushing.'],
+      ['Moving back toward 0', 'The other side is now pushing harder.'],
+    ],
+    use: [
+      'CVD trend: the direction matters more than the number itself.',
+      'Price: if price rises while CVD falls (or the reverse), the move has little conviction behind it.',
+      'The CVD chart inside the Order Flow section shows its path through the day.',
+    ],
+    mind: [
+      'It only counts from the time shown as "since". Start the server before 09:15 to cover the whole day.',
+      'The size cannot be compared between stocks or between days.',
+      'Resets every session. Estimated, not from real trades.',
+    ],
+  },
+  'CVD trend': {
+    what: 'The direction CVD has been heading over the last 30 minutes. It shows whether aggressive buyers or aggressive sellers are currently gaining ground.',
+    read: [
+      ['Rising', 'Buying aggression increasing. Buyers are steadily doing more of the pushing.'],
+      ['Falling', 'Selling aggression increasing. Sellers are steadily doing more of the pushing.'],
+      ['Sideways', 'Balanced order flow. Neither side is gaining.'],
+      ['Price up, CVD rising', 'Buyers are driving the rise. The uptrend is healthy.'],
+      ['Price down, CVD falling', 'Sellers are driving the fall. The downtrend is healthy.'],
+      ['Price up, CVD falling', 'Price is rising without aggressive buying. The uptrend may be weakening.'],
+      ['Price down, CVD rising', 'Buyers are stepping in as price drops. The downtrend may be weakening.'],
+      ['Potential bullish divergence', 'Price made a lower low but CVD made a higher low: selling is fading.'],
+      ['Potential bearish divergence', 'Price made a higher high but CVD made a lower high: buying is fading.'],
+    ],
+    use: [
+      'Price direction and EMA slope: agreement confirms the trend, disagreement warns about it.',
+      'Sell volume share for the last 15 minutes only.',
+      'A divergence needs a second sign, such as price breaking a swing level or crossing VWAP.',
+    ],
+    mind: [
+      'A divergence is a warning, not a confirmation. Price can keep going for a long time.',
+      'Estimated; treat small moves as noise.',
+      'Needs 30 minutes of unbroken live data.',
+    ],
+  },
+  'RVOL': {
+    what: 'Relative volume: how much the stock has traded so far today compared with what it normally trades by this time of day (average of the last 20 sessions). It shows whether the stock is "in play" today.',
+    read: [
+      ['Below 1×', 'Below normal. Less interest than usual; moves are less reliable.'],
+      ['1× to 1.5×', 'Slightly above normal. Ordinary day.'],
+      ['1.5× to 2×', 'Good. Clearly more interest than usual.'],
+      ['2× to 3×', 'Very good. Strong participation.'],
+      ['3× and above', 'Excellent. Unusual activity; something is driving the stock.'],
+    ],
+    use: [
+      'Recent RVOL: is the activity still there now, or did it all happen earlier?',
+      'Relative ATR: high volume with a wider range than usual is real participation.',
+      'Spread %: high volume usually comes with a tight spread and easy entry and exit.',
+    ],
+    mind: [
+      'It is cumulative, so a busy morning keeps it high all day even if trading has gone quiet.',
+      'In the first minutes after the open it jumps around.',
+      'High volume tells you there is interest, not which direction.',
+    ],
+  },
+  'Recent RVOL': {
+    what: 'Relative volume for the last 15 minutes only: the volume traded in those minutes compared with what the stock normally trades in the same 15 minutes of the day. It shows whether the stock is busy right now.',
+    read: [
+      ['Below 1×', 'Below normal. Quiet right now, whatever the day RVOL says.'],
+      ['1× to 1.5×', 'Slightly above normal.'],
+      ['1.5× to 2×', 'Good. Active now.'],
+      ['2× to 3×', 'Very good. Strong activity now.'],
+      ['3× and above', 'Excellent. A burst of activity is under way.'],
+      ['RVOL high, Recent RVOL low', 'The stock was busy earlier and has dried up.'],
+      ['RVOL low, Recent RVOL high', 'Activity has just started picking up.'],
+    ],
+    use: [
+      'RVOL: compare the whole day with the last 15 minutes.',
+      'Volume trend: is this level building or fading?',
+      'A breakout of a swing or pivot level is more believable when Recent RVOL is high.',
+    ],
+    mind: [
+      'Updates every 5 minutes, when new candles arrive.',
+      'Exact, taken from stored candles, not an estimate.',
+    ],
+  },
+  'Volume trend': {
+    what: 'Whether activity is building or fading. It compares Recent RVOL now with Recent RVOL 15 minutes earlier.',
+    read: [
+      ['Above +20%', 'Volume rising. Interest is building; moves are more likely to follow through.'],
+      ['−20% to +20%', 'Volume steady. Activity is holding at its current level.'],
+      ['Below −20%', 'Volume falling. The burst is fading; be careful chasing a move.'],
+    ],
+    use: [
+      'Recent RVOL: "rising" from a very low level is still a quiet stock.',
+      'Price: a move on rising volume is stronger than the same move on falling volume.',
+    ],
+    mind: [
+      'Both readings are already measured against the usual volume for their own time of day, so the normal midday slowdown does not show as "falling".',
+      'Needs 30 minutes of today\'s candles. Updates every 5 minutes.',
+    ],
+  },
+  'VWAP': {
+    what: 'Volume-weighted average price: the average price at which the stock has traded today, where busy prices count for more. It is the day\'s "fair price" and the level most intraday traders and institutions measure against.',
+    read: [
+      ['Price above VWAP', 'The average buyer today is in profit. Bias is bullish; VWAP tends to act as support.'],
+      ['Price below VWAP', 'The average buyer today is at a loss. Bias is bearish; VWAP tends to act as resistance.'],
+      ['Price at VWAP', 'No edge either way. Price often pauses or reverses here.'],
+      ['Price crossing VWAP', 'Control may be changing sides. More meaningful with high volume.'],
+    ],
+    use: [
+      'VWAP deviation and Normalized VWAP deviation: how far price is from it.',
+      'EMA slope: a trend in the same direction as the VWAP side is stronger.',
+      'The VWAP chart inside the section, to see whether price respects it.',
+    ],
+    mind: [
+      'Resets every day.',
+      'In the first 15 to 30 minutes it moves a lot and is less reliable.',
+    ],
+  },
+  'VWAP deviation': {
+    what: 'How far the last price is from VWAP, as a percentage. It shows which side of the day\'s average price the stock is on and by how much.',
+    read: [
+      ['Positive', 'Price is above VWAP by that percentage. Buyers are in control of the day.'],
+      ['Negative', 'Price is below VWAP by that percentage. Sellers are in control of the day.'],
+      ['Close to 0', 'Price is at the day\'s average. No edge.'],
+      ['Growing', 'Price is moving further away from VWAP: the move is extending.'],
+      ['Shrinking', 'Price is returning toward VWAP.'],
+    ],
+    use: [
+      'Normalized VWAP deviation, which tells you whether this distance is large or small for this stock.',
+    ],
+    mind: [
+      'A percentage cannot be compared between stocks: 0.5% is a lot for a calm stock and little for a volatile one.',
+    ],
+  },
+  'Normalized VWAP deviation': {
+    what: 'The distance from VWAP measured in ATRs, the stock\'s typical 5-minute move. Because it is scaled to each stock\'s own volatility, it can be compared between stocks. The sign shows the side; the tag rates the size.',
+    read: [
+      ['Positive / negative', 'Above VWAP / below VWAP.'],
+      ['Within 0.5', 'Avoid. Too close to VWAP for a deviation-based setup.'],
+      ['0.5 to 1', 'Moderate. Lower priority.'],
+      ['1 to 1.5', 'Good candidate. Worth evaluating.'],
+      ['Beyond 1.5', 'Excellent candidate. Price is strongly extended from VWAP.'],
+    ],
+    use: [
+      'EMA slope and RSI: with a strong trend, an extended price can keep going; with a weak trend it more often returns toward VWAP.',
+      'RVOL: an extension on high volume is more likely to continue.',
+      'Nearest support and resistance: is a level in the way?',
+    ],
+    mind: [
+      'The tag rates how far price is from VWAP, on either side. It does not say buy or sell.',
+      'Far from VWAP can mean a strong trend or an overstretched move. The other tiles decide which.',
+      'These thresholds are starting values, not tested levels.',
+    ],
+  },
+  'True range': {
+    what: 'The full distance price covered in the last completed 5-minute candle, including any jump from the previous close. It is the raw measure of how much the stock just moved.',
+    read: [
+      ['Larger than ATR', 'The last candle was more volatile than recent candles: movement is picking up.'],
+      ['About equal to ATR', 'A normal candle.'],
+      ['Smaller than ATR', 'The last candle was quieter than recent candles.'],
+    ],
+    use: [
+      'ATR: true range is one candle, ATR is the average of the last 14.',
+    ],
+    mind: [
+      'One candle is noisy. Do not read much into a single value.',
+    ],
+  },
+  'ATR': {
+    what: 'Average true range: the stock\'s typical move per 5-minute candle, in rupees, averaged over the last 14 candles. It tells you how much room price normally needs.',
+    read: [
+      ['Example', 'ATR ₹3 means the price commonly moves about ₹3 in 5 minutes.'],
+      ['Higher', 'More movement: stops must be wider and position size smaller.'],
+      ['Lower', 'Less movement: stops can be tighter, but targets take longer to reach.'],
+      ['Rising', 'Volatility is expanding.'],
+      ['Falling', 'Volatility is contracting.'],
+    ],
+    use: [
+      'Stop distance, which is 1.5 × ATR.',
+      'ATR % to compare stocks; Relative ATR to compare with a normal day.',
+    ],
+    mind: [
+      'It measures the size of moves, not their direction.',
+      'In rupees, so it cannot be compared between stocks at different prices.',
+    ],
+  },
+  'ATR %': {
+    what: 'ATR as a percentage of the share price. It puts volatility on the same scale for every stock, so a ₹300 stock and a ₹4,000 stock can be compared.',
+    read: [
+      ['Higher', 'The stock moves more per candle relative to its price: more opportunity and more risk.'],
+      ['Lower', 'The stock moves less per candle: slower, steadier.'],
+    ],
+    use: [
+      'Compare it across the stocks in the list to find the ones that are moving.',
+      'Relative ATR: is this stock\'s volatility normal for it, or unusual today?',
+      'Spread %: the spread should be small compared with ATR %, or costs eat the move.',
+    ],
+    mind: [
+      'No tag: there is no good or bad level by itself.',
+    ],
+  },
+  'Relative ATR': {
+    what: 'Today\'s volatility compared with what is normal for this stock at this time of day (average of the last 20 sessions). 1× is a normal day.',
+    read: [
+      ['Below 0.8×', 'Bad. Much quieter than usual; not enough movement.'],
+      ['0.8× to 1×', 'Normal · avoid. Slightly quieter than usual.'],
+      ['1× to 1.2×', 'Normal · good. Usual movement.'],
+      ['1.2× to 1.5×', 'Very good. Elevated movement.'],
+      ['1.5× to 2×', 'Exceptional. High movement, still manageable.'],
+      ['2× to 3×', 'Very high · avoid. Moves are too large to control risk well.'],
+      ['Above 3×', 'Extreme · avoid. Erratic; stops are easily jumped.'],
+    ],
+    use: [
+      'RVOL: high Relative ATR with high RVOL is real participation. High Relative ATR with low RVOL is thin, erratic trading.',
+      'Position size: higher volatility means a wider stop and fewer shares.',
+    ],
+    mind: [
+      'Always a positive value.',
+      'It compares with the same time of day, so the naturally wild open is not counted as unusual.',
+    ],
+  },
+  'Rate of change': {
+    what: 'Momentum: the percentage the price has moved over the last 10 five-minute candles (50 minutes). It shows how fast and in which direction the price is travelling.',
+    read: [
+      ['Positive', 'Price is higher than 50 minutes ago: upward momentum.'],
+      ['Negative', 'Price is lower than 50 minutes ago: downward momentum.'],
+      ['Close to 0', 'No momentum; the price is going sideways.'],
+      ['Getting larger', 'Momentum is building.'],
+      ['Shrinking toward 0', 'Momentum is fading, even if price is still moving the same way.'],
+      ['Example: +1.75%', 'The price is 1.75% above where it was 10 candles ago.'],
+    ],
+    use: [
+      'RSI: both should agree on direction.',
+      'EMA slope: momentum in the direction of the trend is the strongest case.',
+      'ATR %: a rate of change several times the ATR % is a strong move.',
+    ],
+    mind: [
+      'It compares only two prices, so it can jump when an unusual old candle leaves the 10-candle window.',
+      'No tag: judge it against the stock\'s own ATR %.',
+    ],
+  },
+  'RSI': {
+    what: 'Relative Strength Index: compares the size of recent up moves with recent down moves over 14 five-minute candles, on a scale of 0 to 100. 50 is the middle; above it buyers have had the upper hand, below it sellers.',
+    read: [
+      ['Below 30', 'Strong bearish momentum.'],
+      ['30 to 40', 'Normal bearish momentum.'],
+      ['40 to 50', 'Weak bearish momentum.'],
+      ['50 to 60', 'Weak bullish momentum.'],
+      ['60 to 70', 'Normal bullish momentum.'],
+      ['Above 70', 'Strong bullish momentum.'],
+      ['Crossing 50', 'Momentum is changing sides.'],
+    ],
+    use: [
+      'Rate of change: both should point the same way.',
+      'EMA slope: RSI above 50 with a rising EMA is a consistent uptrend; below 50 with a falling EMA a consistent downtrend.',
+      'Price making a new high while RSI makes a lower high is a sign of fading momentum.',
+    ],
+    mind: [
+      'Many traders also read above 70 as "overbought" and below 30 as "oversold", where a pause or pullback becomes more likely.',
+      'In a strong trend RSI can stay above 70 or below 30 for a long time. An extreme value alone is not a reason to trade against the trend.',
+    ],
+  },
+  'EMA 20': {
+    what: 'Exponential moving average of the last 20 five-minute closes (about 100 minutes), with recent prices counting more. It smooths the price into a trend line.',
+    read: [
+      ['Price above EMA', 'Short-term uptrend. The EMA tends to act as support on dips.'],
+      ['Price below EMA', 'Short-term downtrend. The EMA tends to act as resistance on bounces.'],
+      ['Price far from EMA', 'The move is stretched; a pullback toward the EMA becomes more likely.'],
+      ['Price crossing back and forth', 'No trend; the stock is ranging.'],
+    ],
+    use: [
+      'EMA slope % and Normalized EMA slope %: is the line itself rising or falling, and how fast?',
+      'VWAP: price above both is a stronger bullish picture; below both a stronger bearish one.',
+    ],
+    mind: [
+      'It follows price with a delay, so it confirms a trend after it has started.',
+      'In a sideways market it gives repeated false signals.',
+    ],
+  },
+  'EMA slope %': {
+    what: 'How much the EMA 20 line has risen or fallen over the last 5 candles (25 minutes), as a percentage. It shows the direction and speed of the trend.',
+    read: [
+      ['Positive', 'The trend line is rising: uptrend.'],
+      ['Negative', 'The trend line is falling: downtrend.'],
+      ['Close to 0', 'Flat: no trend.'],
+      ['Growing', 'The trend is speeding up.'],
+      ['Shrinking', 'The trend is slowing, often before it turns.'],
+    ],
+    use: [
+      'Normalized EMA slope %, which carries the quality tag.',
+      'Rate of change and RSI for momentum in the same direction.',
+    ],
+    mind: [
+      'Because the EMA is smoothed, the slope reacts late to sharp turns.',
+    ],
+  },
+  'Normalized EMA slope %': {
+    what: 'The EMA slope divided by 5, giving the average change of the trend line per candle. The sign is the direction; the size is the strength of the trend, which the tag rates.',
+    read: [
+      ['Within ±0.005', 'Avoid · no clear trend. Flat.'],
+      ['0.005 to 0.02', 'Weak trend · avoid. A trend exists but is too slow.'],
+      ['0.02 to 0.05', 'Good candidate. A moderate, tradable trend.'],
+      ['Above 0.05', 'Excellent · strong trend.'],
+      ['Positive / negative', 'Bullish trend / bearish trend. The same size bands apply to both.'],
+    ],
+    use: [
+      'VWAP side: a bullish slope with price above VWAP, or a bearish slope with price below it, agree with each other.',
+      'CVD trend: a trend backed by order flow is more reliable.',
+      'RVOL: trends on high volume last longer.',
+    ],
+    mind: [
+      'It describes the last 25 minutes. A strong reading can come late in a move.',
+    ],
+  },
+  'Spread %': {
+    what: 'The gap between the best buy price (bid) and the best sell price (ask), as a percentage of the price. It is a cost: you lose roughly this much every time you enter and exit with market orders.',
+    read: [
+      ['0 to 0.05%', 'Excellent. Very liquid; entering and exiting costs almost nothing.'],
+      ['0.05% to 0.1%', 'Very good. Acceptable cost.'],
+      ['Above 0.1%', 'Bad · not considered. Too expensive to trade intraday.'],
+    ],
+    use: [
+      'ATR %: the spread should be a small fraction of the typical move.',
+      'Position size: the larger the position, the more the spread costs in rupees.',
+      'Order book depth inside the section: a tight spread with thin quantity still slips on large orders.',
+    ],
+    mind: [
+      'Never below 0, and usually under 0.2%.',
+      'It widens at the open, near the close and around news.',
+      'After hours it shows "market closed".',
+    ],
+  },
+  'Order book imbalance': {
+    what: 'Compares the quantity waiting to buy with the quantity waiting to sell in the top 5 price levels, on a scale of −1 to +1. It shows which side has more orders queued close to the price right now.',
+    read: [
+      ['Positive', 'More visible buying. More quantity is bid than offered near the price.'],
+      ['Negative', 'More visible selling. More quantity is offered than bid near the price.'],
+      ['Exactly 0', 'Balanced.'],
+      ['Near +1 or −1', 'Almost one-sided book.'],
+      ['Example: +0.37', 'About 68% of the nearby quantity is on the buy side, 32% on the sell side.'],
+    ],
+    use: [
+      'Sell volume share and CVD: those are trades that happened; this is only orders waiting.',
+      'Ask and Bid quantity trend for how the whole book has changed over 15 minutes.',
+      'If the book leans to buying but trades are mostly selling, the buy orders are being hit: trust the trades.',
+    ],
+    mind: [
+      'It changes with every quote and can flip within seconds.',
+      'Orders can be placed to mislead and cancelled before they trade.',
+      'Only the top 5 levels are counted.',
+    ],
+  },
+  'Ask quantity trend': {
+    what: 'Whether the total quantity waiting to be sold across the whole order book is growing or shrinking: the average over the 15 minutes ending now against the 15 minutes before. Ask quantity is supply sitting above the price.',
+    read: [
+      ['Above +10%', 'Ask quantity increasing. More sellers are queuing: resistance is building.'],
+      ['−10% to +10%', 'Ask quantity flat. No change in supply.'],
+      ['Below −10%', 'Ask quantity reducing. Sell orders are being bought or withdrawn: less resistance overhead.'],
+      ['Ask up, bid flat or down', 'Sellers stacking up while buyers step back. Upward moves are likely to struggle.'],
+      ['Ask down, bid flat or up', 'Supply thinning while buyers hold. Price can rise more easily.'],
+      ['Both up', 'More orders on both sides. More liquidity, no lean.'],
+      ['Both down', 'The book is thinning. Expect wider, jumpier moves.'],
+    ],
+    use: [
+      'Bid quantity trend: always read the pair together.',
+      'Buy volume change and CVD: if ask quantity is reducing while CVD rises, buyers are the ones consuming it, which is the strongly bullish case.',
+      'Price: price falling with ask quantity increasing means the downtrend is strengthening; price falling with ask quantity reducing means sellers are running out.',
+    ],
+    mind: [
+      'These are pending orders, which can be cancelled at any time. They are intentions, not trades.',
+      'A reducing ask quantity has two causes, sellers cancelling or buyers consuming, and this tile cannot tell them apart.',
+      'The weakest of the pressure readings: use it to confirm, not to decide.',
+      'Needs 30 minutes of live data.',
+    ],
+  },
+  'Bid quantity trend': {
+    what: 'Whether the total quantity waiting to be bought across the whole order book is growing or shrinking: the average over the 15 minutes ending now against the 15 minutes before. Bid quantity is demand sitting below the price.',
+    read: [
+      ['Above +10%', 'Bid quantity increasing. More buyers are queuing: support is building.'],
+      ['−10% to +10%', 'Bid quantity flat. No change in demand.'],
+      ['Below −10%', 'Bid quantity reducing. Buy orders are being sold into or withdrawn: less support underneath.'],
+      ['Bid up, ask flat or down', 'Buyers stacking up while sellers step back. Price is well supported.'],
+      ['Bid down, ask flat or up', 'Support thinning while sellers hold. Price can fall more easily.'],
+      ['Both up', 'More orders on both sides. More liquidity, no lean.'],
+      ['Both down', 'The book is thinning. Expect wider, jumpier moves.'],
+    ],
+    use: [
+      'Ask quantity trend: always read the pair together.',
+      'Sell volume change and CVD: if bid quantity is reducing while CVD falls, sellers are the ones consuming it, which is the strongly bearish case.',
+      'Price: price rising with bid quantity increasing means the uptrend is supported; price rising with bid quantity reducing means support is fading.',
+    ],
+    mind: [
+      'These are pending orders, which can be cancelled at any time. They are intentions, not trades.',
+      'A reducing bid quantity has two causes, buyers cancelling or sellers consuming, and this tile cannot tell them apart.',
+      'The weakest of the pressure readings: use it to confirm, not to decide.',
+      'Needs 30 minutes of live data.',
+    ],
+  },
+  'Nearest support (pivot)': {
+    what: 'The closest pivot level at or below the current price. Pivot levels are calculated once from yesterday\'s high, low and close, stay fixed all day, and are watched by many traders. Support is a price where buying has a better chance of appearing.',
+    read: [
+      ['The price shown', 'The level where a falling price may pause or bounce.'],
+      ['% away', 'How far below the current price it is. A small number means price is sitting just above support.'],
+      ['S1, S2, S3', 'Supports below the pivot. Each further one is reached only on a weaker day.'],
+      ['Pivot, R1, R2, R3 shown here', 'Price has risen above that level, so a former resistance is now acting as support. This is a strong day.'],
+      ['None · price is below S3', 'Price has fallen through every pivot level. An unusually weak day; pivots no longer guide.'],
+    ],
+    use: [
+      'Nearest support (swing): two supports close together make a stronger zone.',
+      'Order flow near the level: selling pressure decreasing or CVD turning up as price reaches support makes a bounce more likely.',
+      'Stop loss: a stop just below a support is better placed than one just above it.',
+    ],
+    mind: [
+      'A level is an area where a reaction is more likely, not a guarantee.',
+      'A support that breaks on high volume often becomes resistance.',
+    ],
+  },
+  'Nearest resistance (pivot)': {
+    what: 'The closest pivot level above the current price. Pivot levels are calculated once from yesterday\'s high, low and close, stay fixed all day, and are watched by many traders. Resistance is a price where selling has a better chance of appearing.',
+    read: [
+      ['The price shown', 'The level where a rising price may pause or turn back.'],
+      ['% away', 'How far above the current price it is. A small number means price is pressing against resistance.'],
+      ['R1, R2, R3', 'Resistances above the pivot. Each further one is reached only on a stronger day.'],
+      ['Pivot, S1, S2, S3 shown here', 'Price has fallen below that level, so a former support is now acting as resistance. This is a weak day.'],
+      ['None · price is above R3', 'Price has risen through every pivot level. An unusually strong day; use the swing resistance instead.'],
+    ],
+    use: [
+      'Nearest resistance (swing): two resistances close together make a stronger zone.',
+      'Target price: if this level sits between the entry and the target, the target may not be reached.',
+      'Order flow near the level: buying pressure increasing and ask quantity reducing make a breakout more likely.',
+    ],
+    mind: [
+      'A level is an area where a reaction is more likely, not a guarantee.',
+      'A resistance that breaks on high volume often becomes support.',
+    ],
+  },
+  'Nearest support (swing)': {
+    what: 'The most recent swing low made today: the low of a 5-minute candle that is lower than the two candles before it and the two after it. It is a price where buyers actually stepped in today.',
+    read: [
+      ['The price shown', 'The latest floor the market itself has made.'],
+      ['% away (negative)', 'The level is below the current price and is acting as support.'],
+      ['Broken', 'Price has fallen below this low. The short-term structure has turned down, and the level may now act as resistance.'],
+      ['Each new swing low higher than the last', 'Uptrend structure.'],
+      ['Each new swing low lower than the last', 'Downtrend structure.'],
+    ],
+    use: [
+      'Nearest support (pivot): agreement between the two makes the level stronger.',
+      'Stop loss: just below the swing low is a natural place for a long trade\'s stop.',
+      'CVD trend: a new low in price with CVD holding up is a potential bullish divergence.',
+    ],
+    mind: [
+      'A swing low is only confirmed two candles (10 minutes) after it forms, so it appears with a delay.',
+      'It changes whenever a new swing low forms.',
+    ],
+  },
+  'Nearest resistance (swing)': {
+    what: 'The most recent swing high made today: the high of a 5-minute candle that is higher than the two candles before it and the two after it. It is a price where sellers actually stepped in today.',
+    read: [
+      ['The price shown', 'The latest ceiling the market itself has made.'],
+      ['% away (positive)', 'The level is above the current price and is acting as resistance.'],
+      ['Broken', 'Price has risen above this high: a breakout. The short-term structure has turned up, and the level may now act as support.'],
+      ['Each new swing high higher than the last', 'Uptrend structure.'],
+      ['Each new swing high lower than the last', 'Downtrend structure.'],
+    ],
+    use: [
+      'Nearest resistance (pivot): agreement between the two makes the level stronger.',
+      'Recent RVOL and Buy volume change: a break on rising volume and buying is more likely to hold.',
+      'CVD trend: a new high in price with CVD falling is a potential bearish divergence.',
+    ],
+    mind: [
+      'A swing high is only confirmed two candles (10 minutes) after it forms, so it appears with a delay.',
+      'A break that quickly falls back below the level is a failed breakout.',
+    ],
+  },
+  'Stop distance': {
+    what: 'How far the price must move against you before the trade is considered wrong: 1.5 times the ATR. It gives the trade enough room for the stock\'s normal movement.',
+    read: [
+      ['Larger', 'The stock is volatile. The stop is wider, so fewer shares can be bought for the same risk.'],
+      ['Smaller', 'The stock is calm. The stop is tighter, so more shares fit the same risk.'],
+    ],
+    use: [
+      'Nearest support (swing and pivot): the stop works best when it sits beyond a support level, not in front of one.',
+      'Position size, which is calculated from this distance.',
+    ],
+    mind: [
+      'A rule of thumb. It follows volatility, not chart levels.',
+      'A fast move or a gap can pass through a stop and fill at a worse price.',
+    ],
+  },
+  'Stop loss': {
+    what: 'The exit price for a buy (long) trade entered at the current price: entry price minus the stop distance. If price reaches it, the trade idea has failed and the loss is taken.',
+    read: [
+      ['The price shown', 'Where to exit if the trade goes wrong.'],
+      ['Stop below a support level', 'Well placed: support has to fail before the stop is hit.'],
+      ['Stop just above a support level', 'Poorly placed: a normal dip to support can hit the stop just before price bounces.'],
+    ],
+    use: [
+      'Nearest support (swing) and Nearest support (pivot).',
+      'Position size: the two together fix the rupee loss if the stop is hit.',
+    ],
+    mind: [
+      'Calculated for a long trade at the current price, so it moves as the price moves. Fix it when you enter.',
+      'For a short trade, mirror it: entry price plus the stop distance.',
+    ],
+  },
+  'Position size': {
+    what: 'How many shares to trade so that being stopped out loses about your maximum risk per trade: maximum risk divided by the stop distance.',
+    read: [
+      ['Shares', 'The quantity that keeps the loss at the stop equal to your set risk.'],
+      ['Needs ₹…', 'The capital required to buy that many shares at the current price, before any leverage.'],
+      ['Risk ₹…', 'The maximum risk per trade set in the header.'],
+      ['Fewer shares', 'A volatile stock (wide stop). The rupee risk is the same.'],
+      ['More shares', 'A calm stock (tight stop). The rupee risk is the same.'],
+    ],
+    use: [
+      'Max risk per trade in the header: change it and this updates immediately.',
+      'Spread %: on a large position the spread adds to the real cost.',
+    ],
+    mind: [
+      'Does not include brokerage, taxes or slippage.',
+      'The capital needed can be more than you have available.',
+    ],
+  },
+  'Target price': {
+    what: 'The exit price for taking profit on a buy (long) trade: entry price plus twice the stop distance. It sets a reward of 2 for every 1 risked.',
+    read: [
+      ['The price shown', 'Where the trade would be closed in profit.'],
+      ['Risk : reward 1 : 2', 'A win earns twice what a loss costs, so the plan is profitable if more than one trade in three wins.'],
+      ['Resistance below the target', 'Price has to break that level first; the target may not be reached.'],
+      ['No resistance before the target', 'A clearer path.'],
+    ],
+    use: [
+      'Nearest resistance (swing) and Nearest resistance (pivot).',
+      'ATR: a target several ATRs away needs time and a real trend to be reached.',
+    ],
+    mind: [
+      'Calculated for a long trade at the current price. For a short trade, mirror it: entry price minus twice the stop distance.',
+      'A fixed multiple of the stop, not a forecast.',
+    ],
+  },
+};
+function guideHtml(title) {
+  const g = GUIDE[title];
+  if (!g) return '<div class="tt-note">No interpretation notes for this tile yet.</div>';
+  const list = (items) => `<ul class="tt-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+  return `<div class="tt-h">What it tells you</div><p class="tt-p">${g.what}</p>
+    <div class="tt-h">How to read it</div><dl class="tt-rows">${g.read.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+    <div class="tt-h">Check it against</div>${list(g.use)}
+    <div class="tt-h">Keep in mind</div>${list(g.mind)}`;
+}
+
 // One tooltip for all info icons. It lives outside the tiles, which are redrawn on every quote,
 // so it stays put while the numbers behind it change.
 let tileInfo = [];
@@ -1022,21 +1657,36 @@ function formulaHtml(text) {
   return html;
 }
 function showTip(icon) {
-  const n = Number(icon.dataset.n);
-  const info = tileInfo[n];
+  const key = icon.dataset.key; // "i:<tile>" formula, "how:<tile>" interpretation
+  const [kind, n] = key.split(':');
+  const info = tileInfo[Number(n)];
   const tip = $('tooltip');
   if (!info) return;
-  if (tipFor !== n) {
-    tip.innerHTML = `<div class="tt-kicker">How it's calculated</div><div class="tt-title">${info.title}</div>${formulaHtml(info.formula)}`;
-    tipFor = n;
+  const guide = kind === 'how';
+  if (tipFor !== key) {
+    tip.innerHTML = guide
+      ? `<div class="tt-kicker">How to interpret</div><div class="tt-title">${info.title}</div>${guideHtml(info.title)}`
+      : `<div class="tt-kicker">How it's calculated</div><div class="tt-title">${info.title}</div>${formulaHtml(info.formula)}`;
+    tip.classList.toggle('guide', guide);
+    tip.scrollTop = 0;
+    tipFor = key;
   }
   // Above the icon, right-aligned to it; dropped below only when there is no room above.
   const a = icon.getBoundingClientRect();
-  const w = tip.offsetWidth, h = tip.offsetHeight, gap = 10;
+  const gap = 10;
+  tip.style.maxHeight = '';
+  let above;
+  if (guide) {
+    // Long text: use whichever side of the icon has more room, and scroll inside if it still doesn't fit.
+    const roomAbove = a.top - gap - 8, roomBelow = window.innerHeight - a.bottom - gap - 8;
+    above = tip.offsetHeight <= roomAbove || roomAbove >= roomBelow;
+    tip.style.maxHeight = Math.max(160, above ? roomAbove : roomBelow) + 'px';
+  }
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  if (!guide) above = a.top - gap - h > 8 || a.bottom + gap + h > window.innerHeight - 8;
   const left = Math.max(12, Math.min(a.right + 14 - w, window.innerWidth - w - 12));
-  const above = a.top - gap - h > 8 || a.bottom + gap + h > window.innerHeight - 8;
   tip.style.left = left + 'px';
-  tip.style.top = (above ? a.top - gap - h : a.bottom + gap) + 'px';
+  tip.style.top = Math.max(8, above ? a.top - gap - h : Math.min(a.bottom + gap, window.innerHeight - h - 8)) + 'px';
   tip.style.setProperty('--arrow-x', (a.left + a.width / 2 - left) + 'px');
   tip.classList.toggle('above', above);
   tip.classList.add('show');
@@ -1049,10 +1699,11 @@ function hideTip() {
 }
 // Click the icon to open its tooltip; click it again, click anywhere else, or press Escape to close.
 document.addEventListener('click', (e) => {
+  if (e.target.closest?.('#tooltip')) return; // reading or scrolling the open tooltip keeps it open
   const icon = e.target.closest?.('.info');
   if (!icon) { hideTip(); return; }
   e.preventDefault(); // the icon sits inside the tile link: don't navigate
-  if (tipFor === Number(icon.dataset.n)) hideTip(); else showTip(icon);
+  if (tipFor === icon.dataset.key) hideTip(); else showTip(icon);
   schedule();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
@@ -1068,9 +1719,10 @@ let touchStart = null;
 let suppressClickUntil = 0;
 function handleTap(el) {
   if (!el) return false;
+  if (el.closest('#tooltip')) return true; // a tap inside the open tooltip keeps it open
   const icon = el.closest('.info');
   if (icon) {
-    if (tipFor === Number(icon.dataset.n)) hideTip(); else showTip(icon);
+    if (tipFor === icon.dataset.key) hideTip(); else showTip(icon);
     schedule();
     return true;
   }
