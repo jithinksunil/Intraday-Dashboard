@@ -93,7 +93,21 @@
   table.levels th:first-child, table.levels td:first-child { text-align: left; }
   table.levels td { padding: 6px 8px; text-align: right; border-top: 1px solid var(--line); }
   table.levels tr.now td { background: var(--hover); font-weight: 600; }
-  .metric { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 4px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
+  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .tiles { grid-template-columns: 1fr; } }
+  .tile { display: block; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; color: inherit; text-decoration: none; transition: border-color .12s, background .12s; }
+  .tile:hover { background: var(--hover); border-color: var(--accent); }
+  .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tile-title { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+  .tile-value { font-size: 28px; font-weight: 650; letter-spacing: -0.01em; margin-top: 10px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile-value.long { font-size: 20px; line-height: 1.7; }
+  .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile-verdict { margin: 10px 0 0; font-size: 13px; }
+  .back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
+  .back:hover { text-decoration: underline; }
+  .jump a[aria-current="page"] { color: var(--text); border-color: var(--accent); }
+  .metric .hero { margin-top: 20px; }
   .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
 </style>
@@ -148,6 +162,12 @@ function renderStatus() {
   if (feed.feed !== 'connected') { el.textContent = feed.feed === 'connecting' ? 'Connecting to Fyers…' : 'Fyers feed disconnected. Reconnecting…'; el.className = 'down'; return; }
   if (!newest) { el.textContent = 'Connected. Waiting for the first quotes…'; return; }
   if (Date.now() - newest < 60000) { el.textContent = 'Live · ' + clock(newest) + ' IST'; el.className = 'live'; return; }
+  // Before 09:15 on a trading day Fyers has already reset volume, VWAP and day change for the new session.
+  const mins = (ms) => { const d = new Date(ms + 19800000); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
+  if (istDay(newest) === istDay(Date.now()) && mins(Date.now()) < 555) {
+    el.textContent = 'Before market open · today\'s volume and VWAP start at 09:15 IST';
+    return;
+  }
   el.textContent = 'Market closed · showing ' + dayText(newest) + ', ' + clock(newest) + ' IST';
 }
 
@@ -164,7 +184,9 @@ function renderList() {
 }
 
 /** Line chart over the 375 session minutes. lines: [{ data, cls }]; fromZero pins the y-axis at 0. */
+let drawCharts = true;
 function chartSvg(lines, { fromZero, format, label, range, guides = [] }) {
+  if (!drawCharts) return '';
   // Drawn at the panel's real pixel width so a wide page gives a wider chart, not a taller one.
   const W = Math.max(360, $('detail').clientWidth - 44), H = 240, L = 58, R = 10, T = 10, B = 24, N = 375;
   const vals = lines.flatMap((l) => (l.data ?? []).filter((v) => v != null));
@@ -297,6 +319,11 @@ function vwapVerdict(dev) {
   return `Price is ${Math.abs(dev).toFixed(2)}% ${side} VWAP, the average price traded today.`;
 }
 
+// Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
+const SECTIONS = [['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-trend', 'Trend'], ['s-book', 'Order book'], ['s-levels', 'Pivot levels'], ['s-swings', 'Swing levels']];
+const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
+let view = viewFromHash(); // null = tile overview, otherwise the id of the section being shown
+
 function renderDetail() {
   const el = $('detail');
   const r = selected && rows.get(selected);
@@ -304,11 +331,10 @@ function renderDetail() {
   const chg = r.changePct;
   const c = curves && curves.sym === selected ? curves : null;
   const stale = r.asOf && Date.now() - r.asOf > 60000;
-  el.innerHTML = `
-    <h2>${esc(short(selected))}</h2>
-    <div class="price num">₹${fmt(price, r.ltp)} <span class="${chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span></div>
-    <div class="jump"><a href="#s-volume">Volume</a><a href="#s-vwap">VWAP</a><a href="#s-volatility">Volatility</a><a href="#s-momentum">Momentum</a><a href="#s-trend">Trend</a><a href="#s-book">Order book</a><a href="#s-levels">Pivot levels</a><a href="#s-swings">Swing levels</a></div>
-    <div class="hero" id="s-volume"><span class="big num">${fmtRvol(r.rvol)}</span><span class="label">relative volume (RVOL)</span></div>
+  drawCharts = Boolean(view); // the overview shows no charts, so don't build them
+  const full = `
+    <div class="metric" id="s-volume">
+    <div class="hero"><span class="big num">${fmtRvol(r.rvol)}</span><span class="label">relative volume (RVOL)</span></div>
     <p class="verdict">${r.rvol == null ? (r.baselineSessions ? 'RVOL starts once the market opens at 09:15 IST.' : 'No volume history for this stock yet, so RVOL can\'t be calculated.') : verdict(r.rvol)}</p>
     <div class="stats">
       <div class="stat"><div class="k">Volume ${stale ? 'for the day' : 'so far today'}</div><div class="v num">${fmt(compact, r.volume)}</div></div>
@@ -320,6 +346,7 @@ function renderDetail() {
       <div class="legend"><span>${stale && r.asOf ? dayText(r.asOf) : 'Today'}</span><span class="avg">Average</span></div></div>
     ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
     <p class="note">RVOL = volume so far ÷ average volume by the same time of day. Above 1 means busier than usual.</p>
+    </div>
 
     <div class="metric" id="s-vwap">
       <div class="hero"><span class="big num">${r.vwap == null ? '–' : '₹' + price.format(r.vwap)}</span><span class="label">VWAP (volume-weighted average price)</span></div>
@@ -427,6 +454,34 @@ function renderDetail() {
       ${swingTable(r)}
       <p class="note">A swing high is a 5-minute candle whose high is the highest of 5 candles: itself and the 2 on each side. A swing low is the same with lows. The last swing high acts as resistance and the last swing low as support. A swing is only confirmed 2 candles later, so the newest one is at least 10 minutes old. These refresh every 5 minutes; the distances update live.</p>
     </div>`;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = full;
+  const header = `
+    <h2>${esc(short(selected))}</h2>
+    <div class="price num">₹${fmt(price, r.ltp)} <span class="${chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span></div>`;
+
+  const section = view && tpl.content.getElementById(view);
+  if (section) {
+    // Detail view of one section.
+    const chips = SECTIONS.map(([id, title]) => `<a href="#${id}" ${id === view ? 'aria-current="page"' : ''}>${title}</a>`).join('');
+    el.innerHTML = `<a class="back" href="#">← All metrics</a>${header}<div class="jump">${chips}</div>${section.outerHTML}`;
+    return;
+  }
+  // Overview: one tile per section, showing its headline number and one-line reading.
+  const tiles = SECTIONS.map(([id, title]) => {
+    const sec = tpl.content.getElementById(id);
+    const big = sec.querySelector('.hero .big');
+    const label = sec.querySelector('.hero .label');
+    const verdictEl = sec.querySelector('.verdict');
+    const long = big.textContent.length > 12; // ranges such as ₹1,369.27 – ₹1,388.83
+    return `<a class="tile" href="#${id}">
+      <div class="tile-title">${title}<span aria-hidden="true">→</span></div>
+      <div class="tile-value ${long ? 'long' : ''} ${big.className.replace('big', '')}">${big.innerHTML}</div>
+      <div class="tile-label">${label.innerHTML}</div>
+      <p class="tile-verdict">${verdictEl ? verdictEl.innerHTML : ''}</p>
+    </a>`;
+  }).join('');
+  el.innerHTML = `${header}<div class="tiles">${tiles}</div>`;
 }
 
 async function loadCurves(sym) {
@@ -479,13 +534,8 @@ $('list').addEventListener('click', (e) => {
   if (b) select(b.dataset.sym);
 });
 
-// Honour a section link such as /#s-book once, after the first render that has data.
-let hashDone = !location.hash;
-function applyHash() {
-  if (hashDone) return;
-  const target = document.querySelector(location.hash);
-  if (target) { hashDone = true; target.scrollIntoView(); }
-}
+// Tiles and the back link are plain #links, so the browser's back button works between views.
+window.addEventListener('hashchange', () => { view = viewFromHash(); window.scrollTo(0, 0); schedule(); });
 
 var dirty = false; // var: schedule() can be called before this line runs (restoring a closed sidebar)
 function schedule() {
@@ -502,7 +552,6 @@ function schedule() {
       console.error(err);
       $('detail').innerHTML = '<p class="empty">This page is newer than the running dashboard server.<br>Stop the server (Ctrl+C) and start it again with <b>npm run dashboard</b>, then refresh.</p>';
     }
-    applyHash();
   });
 }
 
