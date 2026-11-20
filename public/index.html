@@ -373,7 +373,7 @@ const RATINGS = {
   spreadPct: [
     { upTo: 0.05, grade: 'excellent', label: 'Excellent' }, // 0 to 0.05 %
     { upTo: 0.1, grade: 'verygood', label: 'Very good' },   // above 0.05 to 0.1 %
-    { upTo: Infinity, grade: 'bad', label: 'Bad' },         // above 0.1 %
+    { upTo: Infinity, grade: 'bad', label: 'Bad · not considered' }, // above 0.1 %
   ],
   // Lower limits are inclusive here: exactly 1.5 is Good, exactly 2 is Very good, and so on.
   rvol: [
@@ -448,6 +448,7 @@ function renderDetail() {
     <p class="verdict">${r.rvol == null ? (r.baselineSessions ? 'RVOL starts once the market opens at 09:15 IST.' : 'No volume history for this stock yet, so RVOL can\'t be calculated.') : verdict(r.rvol)}</p>
     <div class="stats">
       <div class="stat"><div class="k">Volume ${stale ? 'for the day' : 'so far today'}</div><div class="v num">${fmt(compact, r.volume)}</div></div>
+      <div class="stat"><div class="k">RVOL scale</div><div class="v num" style="font-size:14px">0 ← quieter · <b>1× = usual</b> · busier →</div><div class="k">never below 0 · no upper limit</div></div>
       <div class="stat"><div class="k">Usual volume by this time</div><div class="v num">${fmt(compact, r.expected)}</div></div>
       <div class="stat"><div class="k">Compared against</div><div class="v num">${r.baselineSessions ? 'last ' + r.baselineSessions + ' sessions' : '–'}</div></div>
       <div class="stat"><div class="k">Data as of</div><div class="v num">${r.asOf ? (stale ? dayText(r.asOf) + ', ' : '') + clock(r.asOf) : '–'}</div></div>
@@ -455,7 +456,7 @@ function renderDetail() {
     <div class="chart-head"><h3>Cumulative volume through the session</h3>
       <div class="legend"><span>${stale && r.asOf ? dayText(r.asOf) : 'Today'}</span><span class="avg">Average</span></div></div>
     ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
-    <p class="note">RVOL = volume so far ÷ average volume by the same time of day. Above 1 means busier than usual. Ratings: under 1 below normal · 1–1.5 slightly above normal · 1.5–2 good · 2–3 very good · 3 and above excellent.</p>
+    <p class="note">RVOL = volume so far ÷ average volume by the same time of day. 1× is the base: exactly the usual volume. Below 1 means quieter than usual, above 1 means busier. It can never go below 0, because volume can't be negative. Ratings: under 1 below normal · 1–1.5 slightly above normal · 1.5–2 good · 2–3 very good · 3 and above excellent.</p>
     </div>
 
     <div class="metric" id="s-vwap">
@@ -526,14 +527,15 @@ function renderDetail() {
       ${r.imbalance5 == null ? '' : `<div class="split" role="img" aria-label="Share of quantity on the buy and sell side"><div class="b" style="width:${(((1 + r.imbalance5) / 2) * 100).toFixed(1)}%"></div><div class="a" style="flex:1"></div></div>
       <div class="split-labels"><span>Buy ${qty.format(r.bidQty5)}</span><span>Sell ${qty.format(r.askQty5)}</span></div>`}
       <div class="stats">
-        <div class="stat"><div class="k">Spread %</div><div class="v num">${r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%'} ${badge(rate('spreadPct', r.spreadPct))}</div><div class="k">0–0.05% excellent · 0.05–0.1% very good · above 0.1% bad</div></div>
+        <div class="stat"><div class="k">Spread %</div><div class="v num">${r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%'} ${badge(rate('spreadPct', r.spreadPct))}</div><div class="k">0–0.05% excellent · 0.05–0.1% very good · above 0.1% bad, not considered</div></div>
+        <div class="stat"><div class="k">Spread scale</div><div class="v num" style="font-size:14px"><b>0 = no gap</b> · wider →</div><div class="k">never below 0 · usually below 0.2% · above 0.1% is not considered</div></div>
         <div class="stat"><div class="k">Spread (₹)</div><div class="v num">${r.spread == null ? '–' : '₹' + price.format(r.spread)}</div></div>
         <div class="stat"><div class="k">Imbalance, top 5 levels</div><div class="v num ${r.imbalance5 == null ? '' : r.imbalance5 >= 0 ? 'up' : 'down'}">${signed(r.imbalance5)} ${r.bookLive ? badge(rate('imbalance', r.imbalance5)) : ''}</div></div>
         <div class="stat"><div class="k">Imbalance, whole book</div><div class="v num ${r.imbalanceBook == null ? '' : r.imbalanceBook >= 0 ? 'up' : 'down'}">${signed(r.imbalanceBook)} ${r.bookLive ? badge(rate('imbalance', r.imbalanceBook)) : ''}</div></div>
       </div>
       <div class="chart-head"><h3>Order book depth (best 5 levels each side)</h3></div>
       ${bookTable(r.book)}
-      <p class="note">Spread % = (best ask − best bid) ÷ their midpoint: the cost of crossing the book. Imbalance = (buy quantity − sell quantity) ÷ (buy + sell), from −1 (all sellers) to +1 (all buyers). "Whole book" uses the exchange's total buy and sell quantity across every level. Displayed orders can be cancelled at any time, so treat imbalance as a hint, not proof of buying or selling.</p>
+      <p class="note">Spread % = (best ask − best bid) ÷ their midpoint: the cost of crossing the book. 0 is the base: no gap between buyers and sellers. It can never go below 0 and has no fixed upper limit, but it is usually under 0.2%. Anything above 0.1% is rated bad and not considered for a trade. Imbalance = (buy quantity − sell quantity) ÷ (buy + sell), from −1 (all sellers) to +1 (all buyers). "Whole book" uses the exchange's total buy and sell quantity across every level. Displayed orders can be cancelled at any time, so treat imbalance as a hint, not proof of buying or selling.</p>
     </div>
 
     <div class="metric" id="s-levels">
@@ -602,7 +604,7 @@ function renderDetail() {
   const level = (lv) => (lv ? { value: rupee(lv.price), sub: (lv.name ? lv.name + ' · ' : '') + signed(lv.distancePct) + '% away' + (lv.broken ? ' · broken' : '') } : { value: '–', sub: '' });
   const pivS = level(r.support), pivR = level(r.resistance), swS = level(r.swingLow), swR = level(r.swingHigh);
   const TILES = [
-    ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'volume vs usual for this time', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`, rate('rvol', r.rvol)],
+    ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'base 1× = usual · below 1 quieter · above 1 busier · never below 0', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`, rate('rvol', r.rvol)],
     ['s-vwap', 'VWAP', rupee(r.vwap), '', 'average price traded today', `VWAP = Σ(price × volume) ÷ Σ(volume) for today's trades (taken from the exchange feed)`],
     ['s-vwap', 'VWAP deviation', pct(r.vwapDevPct), tone(r.vwapDevPct), r.vwap == null ? '' : signed(r.ltp - r.vwap) + ' ₹ from VWAP', `VWAP deviation % = (last price − VWAP) ÷ VWAP × 100`],
     ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'distance from VWAP in ATRs', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`],
@@ -614,7 +616,7 @@ function renderDetail() {
     ['s-momentum', 'Rate of change', pct(r.roc), tone(r.roc), 'over 10 candles (50 min)', `ROC % = (close now − close 10 candles ago) ÷ close 10 candles ago × 100`],
     ['s-trend', 'EMA 20', rupee(r.ema), '', r.priceVsEmaPct == null ? '' : 'price ' + signed(r.priceVsEmaPct) + '% vs EMA', `EMA = close × k + previous EMA × (1 − k), with k = 2 ÷ (20 + 1), on 5-minute closes`],
     ['s-trend', 'EMA slope %', pct(r.emaSlopePct, 3), tone(r.emaSlopePct), 'change in EMA over 5 candles', `EMA slope % = (EMA now − EMA 5 candles ago) ÷ EMA 5 candles ago × 100`],
-    ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : '') : '₹' + price.format(r.spread) + ' bid to ask', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`, rate('spreadPct', r.spreadPct)],
+    ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : 'never below 0 · usually below 0.2%') : '₹' + price.format(r.spread) + ' bid to ask · never below 0 · usually below 0.2%', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`, rate('spreadPct', r.spreadPct)],
     ['s-book', 'Order book imbalance', signed(r.imbalance5), tone(r.imbalance5), r.book && !r.bookLive ? 'market closed · leftover book' : 'top 5 levels, −1 to +1', `Imbalance = (bid quantity − ask quantity) ÷ (bid quantity + ask quantity), over the top 5 levels`, r.bookLive ? rate('imbalance', r.imbalance5) : null],
     ['s-levels', 'Nearest support (pivot)', pivS.value, '', pivS.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. S1 = 2 × pivot − high, S2 = pivot − (high − low), S3 = low − 2 × (high − pivot). Shown: the closest level at or below the price`],
     ['s-levels', 'Nearest resistance (pivot)', pivR.value, '', pivR.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. R1 = 2 × pivot − low, R2 = pivot + (high − low), R3 = high + 2 × (pivot − low). Shown: the closest level above the price`],
