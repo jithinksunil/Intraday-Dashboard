@@ -1,0 +1,21 @@
+{
+  "name": "trading-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Records live quotes and order-book depth from the Fyers free API to daily gzipped NDJSON files.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "login": "node src/login.js",
+    "record": "node src/record.js",
+    "peek": "node src/peek.js",
+    "test": "node --test \"test/*.test.js\"",
+    "history": "node src/history.js"
+  },
+  "dependencies": {
+    "fyers-api-v3": "2.4.1",
+    "ws": "8.23.0"
+  }
+}

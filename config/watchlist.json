@@ -1,0 +1,32 @@
+{
+  "quotes": [
+    "NSE:NIFTY50-INDEX",
+    "NSE:NIFTYBANK-INDEX",
+    "NSE:FINNIFTY-INDEX",
+    "NSE:NIFTYIT-INDEX",
+    "NSE:INDIAVIX-INDEX",
+    "NSE:RELIANCE-EQ",
+    "NSE:HDFCBANK-EQ",
+    "NSE:ICICIBANK-EQ",
+    "NSE:INFY-EQ",
+    "NSE:TCS-EQ",
+    "NSE:SBIN-EQ",
+    "NSE:AXISBANK-EQ",
+    "NSE:BHARTIARTL-EQ",
+    "NSE:LT-EQ",
+    "NSE:ITC-EQ"
+  ],
+  "depth5": [
+    "NSE:RELIANCE-EQ",
+    "NSE:HDFCBANK-EQ",
+    "NSE:ICICIBANK-EQ",
+    "NSE:INFY-EQ",
+    "NSE:TCS-EQ",
+    "NSE:SBIN-EQ",
+    "NSE:AXISBANK-EQ",
+    "NSE:BHARTIARTL-EQ",
+    "NSE:LT-EQ",
+    "NSE:ITC-EQ"
+  ],
+  "depth50": "NSE:RELIANCE-EQ"
+}
