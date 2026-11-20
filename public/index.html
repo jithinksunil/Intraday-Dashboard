@@ -27,6 +27,10 @@
   #status.down::before { background: var(--down); }
   main { display: grid; grid-template-columns: 320px 1fr; gap: 16px; padding: 16px 20px; }
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
+  /* The header stays at the top while scrolling, and the stock list stays pinned just below it.
+     --header-h is the header's measured height, kept current by the script. */
+  header { position: sticky; top: 0; z-index: 10; }
+  nav.panel { position: sticky; top: calc(var(--header-h, 57px) + 16px); align-self: start; max-height: calc(100vh - var(--header-h, 57px) - 32px); overflow-y: auto; }
   main.closed { grid-template-columns: 1fr; }
   main.closed nav { display: none; }
   .head-right { display: flex; align-items: center; gap: 18px; }
@@ -157,6 +161,10 @@
   .zone-kind { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .zone-range { font-size: 18px; font-weight: 650; margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
   .zone ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .zone ul.checks { list-style: none; padding-left: 0; margin-top: 8px; color: var(--text); }
+  .zone ul.checks li { padding: 2px 0; }
+  .chk { display: inline-block; width: 18px; font-weight: 700; text-align: center; }
+  .chk.yes { color: var(--up); } .chk.no { color: var(--down); } .chk.na { color: var(--muted); }
   .zone-text { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
   .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .tile-verdict { margin: 10px 0 0; font-size: 13px; }
@@ -168,7 +176,7 @@
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   /* ---------- phones and narrow windows ---------- */
   @media (max-width: 760px) {
-    header { flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; }
+    header { position: static; flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; }
     #toggle { display: none; }
     .head-right { width: 100%; justify-content: space-between; gap: 10px; }
     .risk { font-size: 12px; gap: 6px; flex: none; }
@@ -178,7 +186,7 @@
     main, main.closed { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px; }
     /* The stock list becomes a swipeable strip that stays at the top while scrolling. */
     main.closed nav { display: block; }
-    nav.panel { position: sticky; top: 0; z-index: 4; border-radius: 10px; box-shadow: 0 6px 14px rgba(0, 0, 0, .18); }
+    nav.panel { position: sticky; top: 0; z-index: 4; max-height: none; overflow: visible; border-radius: 10px; box-shadow: 0 6px 14px rgba(0, 0, 0, .18); }
     #list { display: flex; gap: 6px; padding: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     #list::-webkit-scrollbar { display: none; }
     #list li { flex: none; }
@@ -441,11 +449,47 @@ function swingTable(r) {
 
 function trendVerdict(slope, vsEma) {
   if (slope == null) return 'Not enough candles yet to calculate the EMA.';
-  const dir = slope > 0.02 ? 'rising' : slope < -0.02 ? 'falling' : 'flat';
-  const side = vsEma == null ? '' : ` Price is ${Math.abs(vsEma).toFixed(2)}% ${vsEma >= 0 ? 'above' : 'below'} it.`;
-  return `The 20-candle EMA is ${dir}.${side}`;
+  const rating = rateEmaSlope(slope / EMA_SLOPE_CANDLES);
+  const side = vsEma == null ? '' : ` Price is ${Math.abs(vsEma).toFixed(2)}% ${vsEma >= 0 ? 'above' : 'below'} the EMA.`;
+  return `${rating.slopeText}: ${signed(slope / EMA_SLOPE_CANDLES, 4)}% per candle.${side}`;
 }
-
+// How the engine uses the EMA slope. Each point carries ok: true / false when the dashboard can
+// check it, or null when it needs something not on the dashboard yet (ADX, Efficiency Ratio).
+function trendZone(r) {
+  const v = emaSlopePerCandle(r);
+  if (v == null) return null;
+  if (Math.abs(v) <= 0.005) {
+    return { kind: 'Mean-reversion candidate', tag: 'Flat slope', tone: 'average', action: 'Consider mean-reversion setups.', points: [
+      ['EMA slope is close to zero.', true],
+      ['ADX is relatively low.', null],
+      ['Efficiency Ratio is low.', null],
+      ['Price moves around VWAP.', r.vwapDevAtr == null ? null : Math.abs(r.vwapDevAtr) <= 0.5],
+    ] };
+  }
+  const up = v > 0;
+  if (Math.abs(v) < 0.02) {
+    // Weak slopes are avoided: not flat enough for mean reversion, not strong enough for momentum.
+    return { kind: 'No trend setup', tag: `Weak ${up ? 'bullish' : 'bearish'} slope · avoid`, tone: 'average', action: 'Avoid: the slope is too weak for a momentum setup and not flat enough for mean reversion.', points: [
+      [`EMA slope is ${up ? 'positive' : 'negative'}, but under 0.02% per candle.`, true],
+    ] };
+  }
+  return { kind: up ? 'Bullish momentum candidate' : 'Bearish momentum candidate', tag: up ? 'Positive slope' : 'Negative slope', tone: up ? 'buy' : 'sell', action: `Consider ${up ? 'bullish' : 'bearish'} momentum setups.`, points: [
+    [`EMA slope is ${up ? 'positive' : 'negative'}.`, true],
+    [`Price is ${up ? 'above' : 'below'} EMA.`, r.priceVsEmaPct == null ? null : (up ? r.priceVsEmaPct > 0 : r.priceVsEmaPct < 0)],
+    ['ADX indicates trend strength.', null],
+    up ? ['RVOL confirms increased activity.', r.rvol == null ? null : r.rvol > 1] : ['Selling pressure persists.', null],
+  ] };
+}
+function trendZoneHtml(r) {
+  const z = trendZone(r);
+  if (!z) return '';
+  const mark = (ok) => (ok == null ? '<span class="chk na" title="Not on the dashboard yet">?</span>' : ok ? '<span class="chk yes" title="True right now">✓</span>' : '<span class="chk no" title="Not true right now">✕</span>');
+  return `<div class="zone">
+      <div class="zone-kind">${z.kind} <span class="badge ${z.tone}">${z.tag}</span></div>
+      <ul class="checks">${z.points.map(([text, ok]) => `<li>${mark(ok)} ${text}</li>`).join('')}</ul>
+      <p class="zone-text">${z.action} <span class="sub">✓ true now · ✕ not true now · ? needs ADX or Efficiency Ratio, which are not on the dashboard yet.</span></p>
+    </div>`;
+}
 function rsiVerdict(v) {
   if (v == null) return 'Not enough candles yet to calculate RSI.';
   return `RSI is ${v.toFixed(1)}: ${rate('rsi', v).text}.`;
@@ -501,6 +545,13 @@ const RATINGS = {
     { upTo: Infinity, grade: 'buy', label: 'Strong bullish ↑', text: 'strong bullish momentum, upward' },       // above 70
   ],
   // Normalized VWAP deviation = (price - VWAP) / ATR. Initial research thresholds, not validated levels.
+  // Normalized EMA slope (% per candle), by size; the direction is added to the label by rateEmaSlope.
+  emaSlopeNorm: [
+    { upTo: 0.005, grade: 'neutral', label: 'Avoid', trend: 'no clear trend', slope: 'Flat / neutral' },           // -0.005 to +0.005
+    { below: 0.02, grade: 'average', label: 'Weak', trend: 'trend · avoid', slope: 'Weak', avoid: true },          // 0.005 to under 0.02
+    { upTo: 0.05, grade: 'verygood', label: 'Good', trend: 'candidate', slope: 'Moderate' },                       // 0.02 to 0.05
+    { upTo: Infinity, grade: 'excellent', label: 'Excellent', trend: 'trend', slope: 'Strong' },                   // above 0.05
+  ],
   // Classification by absolute deviation (how far from VWAP, either side). Rate with Math.abs(value).
   vwapDevAtr: [
     { below: 0.5, grade: 'neutral', label: 'Avoid', text: 'No deviation-based setup' },                          // below 0.5
@@ -532,7 +583,21 @@ function rate(metric, value) {
   return RATINGS[metric].find((band) => (band.below != null ? value < band.below : value <= band.upTo)) ?? null;
 }
 const rateVwapDev = (v) => (v == null ? null : rate('vwapDevAtr', Math.abs(v)));
+/** Rating for a normalized EMA slope: quality from its size, wording from its direction. */
+function rateEmaSlope(v) {
+  if (v == null) return null;
+  const band = rate('emaSlopeNorm', Math.abs(v));
+  const dir = v > 0 ? 'bullish' : 'bearish';
+  if (band.label === 'Avoid') return { ...band, label: 'Avoid · no clear trend', slopeText: 'Flat / neutral' };
+  const label = band.label === 'Excellent' ? `Excellent · strong ${dir} trend` : band.label === 'Good' ? `Good ${dir} candidate` : `Weak ${dir} trend · avoid`;
+  return { ...band, label, slopeText: `${band.slope} ${dir} slope` };
+}
 const badge = (rating) => (rating ? `<span class="badge ${rating.grade}">${rating.label}</span>` : '');
+
+// The EMA slope is measured over this many candles (must match SLOPE_BARS in src/lib/rvolEngine.js).
+// Dividing the slope by it gives the average change per candle.
+const EMA_SLOPE_CANDLES = 5;
+const emaSlopePerCandle = (r) => (r.emaSlopePct == null ? null : r.emaSlopePct / EMA_SLOPE_CANDLES);
 
 // Execution plan for a long trade entered at the last price.
 const STOP_ATR_MULT = 1.5; // stop distance = 1.5 x ATR
@@ -617,33 +682,35 @@ function renderDetail() {
     </div>
 
     <div class="metric" id="s-momentum">
-      <div class="hero"><span class="big num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</span><span class="label">RSI (14, 5-min) ${badge(rate('rsi', r.rsi))}</span></div>
-      <p class="verdict">${rsiVerdict(r.rsi)}</p>
+      <div class="hero"><span class="big num ${r.roc == null ? '' : r.roc >= 0 ? 'up' : 'down'}">${signed(r.roc)}${r.roc == null ? '' : '%'}</span><span class="label">rate of change (10 candles, 5-min)</span></div>
+      <p class="verdict">${r.roc == null ? 'Not enough candles yet to calculate the rate of change.' : `Price is ${Math.abs(r.roc).toFixed(2)}% ${r.roc >= 0 ? 'higher' : 'lower'} than 50 minutes ago.`} ${rsiVerdict(r.rsi)}</p>
       <div class="stats">
-        <div class="stat"><div class="k">RSI (14)</div><div class="v num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</div><div class="k">value from 0 to 100</div></div>
-        <div class="stat"><div class="k">Rate of change (10 candles)</div><div class="v num ${r.roc == null ? '' : r.roc >= 0 ? 'up' : 'down'}">${signed(r.roc)}${r.roc == null ? '' : '%'}</div></div>
-        <div class="stat"><div class="k">ROC compares price with</div><div class="v num">50 minutes ago</div></div>
+        <div class="stat"><div class="k">Rate of change (10 candles)</div><div class="v num ${r.roc == null ? '' : r.roc >= 0 ? 'up' : 'down'}">${signed(r.roc)}${r.roc == null ? '' : '%'}</div><div class="k">compares price with 50 minutes ago</div></div>
+        <div class="stat"><div class="k">RSI (14)</div><div class="v num">${r.rsi == null ? '–' : r.rsi.toFixed(1)} ${badge(rate('rsi', r.rsi))}</div><div class="k">base 50 = gains and losses equal · below 50 bearish · above 50 bullish · range 0 to 100</div></div>
       </div>
-      <div class="chart-head"><h3>RSI through the session</h3><div class="legend"><span>RSI</span></div></div>
-      ${c ? chartSvg([{ data: c.rsiCurve, cls: 'l-today' }], { range: [0, 100], guides: [30, 70], format: (v) => v.toFixed(0), label: 'RSI through the session with 30 and 70 marked' }) : '<p class="empty">Loading chart…</p>'}
-      <div class="chart-head" style="margin-top:18px"><h3>Rate of change through the session</h3><div class="legend"><span>ROC %</span></div></div>
+      <div class="chart-head"><h3>Rate of change through the session</h3><div class="legend"><span>ROC %</span></div></div>
       ${c ? chartSvg([{ data: c.rocCurve, cls: 'l-today' }], { guides: [0], format: (v) => v.toFixed(2), label: 'Rate of change through the session with zero marked' }) : '<p class="empty">Loading chart…</p>'}
-      <p class="note">Rate of change = how far price has moved, in percent, over the last 10 five-minute candles. Positive means momentum is up. RSI (0 to 100) compares the size of recent gains with recent losses over 14 candles. RSI ratings: under 30 strong bearish · 30–40 normal bearish · 40–50 weak bearish · 50–60 weak bullish · 60–70 normal bullish · above 70 strong bullish. Both headline values include the candle now forming, using the last price; the charts show completed candles.</p>
+      <div class="chart-head" style="margin-top:18px"><h3>RSI through the session</h3><div class="legend"><span>RSI</span></div></div>
+      ${c ? chartSvg([{ data: c.rsiCurve, cls: 'l-today' }], { range: [0, 100], guides: [30, 70], format: (v) => v.toFixed(0), label: 'RSI through the session with 30 and 70 marked' }) : '<p class="empty">Loading chart…</p>'}
+      <p class="note">Rate of change = how far price has moved, in percent, over the last 10 five-minute candles. Positive means momentum is up. RSI (0 to 100) compares the size of recent gains with recent losses over 14 candles. 50 is the base: recent gains and losses are the same size. Below 50 means losses have been larger than gains (bearish, downward momentum); above 50 means gains have been larger (bullish, upward momentum). The further from 50, the stronger. RSI ratings: under 30 strong bearish · 30–40 normal bearish · 40–50 weak bearish · 50–60 weak bullish · 60–70 normal bullish · above 70 strong bullish. Both headline values include the candle now forming, using the last price; the charts show completed candles.</p>
     </div>
 
     <div class="metric" id="s-trend">
-      <div class="hero"><span class="big num ${r.emaSlopePct == null ? '' : r.emaSlopePct >= 0 ? 'up' : 'down'}">${signed(r.emaSlopePct, 3)}${r.emaSlopePct == null ? '' : '%'}</span><span class="label">EMA slope (20-candle EMA, 5-min)</span></div>
+      <div class="hero"><span class="big num ${r.emaSlopePct == null ? '' : r.emaSlopePct >= 0 ? 'up' : 'down'}">${signed(r.emaSlopePct, 3)}${r.emaSlopePct == null ? '' : '%'}</span><span class="label">EMA slope (20-candle EMA, 5-min) ${badge(rateEmaSlope(emaSlopePerCandle(r)))}</span></div>
       <p class="verdict">${trendVerdict(r.emaSlopePct, r.priceVsEmaPct)}</p>
       <div class="stats">
         <div class="stat"><div class="k">EMA (20)</div><div class="v num">${r.ema == null ? '–' : '₹' + price.format(r.ema)}</div></div>
         <div class="stat"><div class="k">EMA slope %</div><div class="v num ${r.emaSlopePct == null ? '' : r.emaSlopePct >= 0 ? 'up' : 'down'}">${signed(r.emaSlopePct, 3)}${r.emaSlopePct == null ? '' : '%'}</div></div>
+        <div class="stat"><div class="k">Normalized EMA slope %</div><div class="v num ${r.emaSlopePct == null ? '' : r.emaSlopePct >= 0 ? 'up' : 'down'}">${signed(emaSlopePerCandle(r), 4)}${r.emaSlopePct == null ? '' : '%'}</div><div class="k num">${r.emaSlopePct == null ? '' : signed(r.emaSlopePct, 3) + '% ÷ 5 candles'}</div><div class="k">${badge(rateEmaSlope(emaSlopePerCandle(r)))}</div></div>
         <div class="stat"><div class="k">Price vs EMA</div><div class="v num ${r.priceVsEmaPct == null ? '' : r.priceVsEmaPct >= 0 ? 'up' : 'down'}">${signed(r.priceVsEmaPct)}${r.priceVsEmaPct == null ? '' : '%'}</div></div>
       </div>
+      <div class="chart-head"><h3>How the engine uses the EMA slope right now</h3></div>
+      <div class="zones">${trendZoneHtml(r)}</div>
       <div class="chart-head"><h3>Price and EMA through the session</h3><div class="legend"><span>Price</span><span class="vw">EMA (20)</span></div></div>
       ${c ? chartSvg([{ data: c.emaCurve, cls: 'l-vwap' }, { data: c.price, cls: 'l-today' }], { format: (v) => price.format(v), label: 'Price against its 20-candle EMA through the session' }) : '<p class="empty">Loading chart…</p>'}
       <div class="chart-head" style="margin-top:18px"><h3>EMA slope through the session</h3><div class="legend"><span>Slope %</span></div></div>
       ${c ? chartSvg([{ data: c.slopeCurve, cls: 'l-today' }], { guides: [0], format: (v) => v.toFixed(3), label: 'EMA slope through the session with zero marked' }) : '<p class="empty">Loading chart…</p>'}
-      <p class="note">EMA is an average of the last 20 five-minute closes that gives recent candles more weight. EMA slope % = how much the EMA itself has changed over the last 5 candles (25 minutes): positive means the trend is rising, near zero means it is flattening. Headline values include the candle now forming; the charts show completed candles.</p>
+      <p class="note">EMA is an average of the last 20 five-minute closes that gives recent candles more weight. EMA slope % = how much the EMA itself has changed over the last 5 candles (25 minutes): positive means the trend is rising, near zero means it is flattening. Normalized EMA slope % = EMA slope % ÷ 5, the average change in the EMA per candle. Ratings by size, in either direction: within ±0.005% avoid (flat, no clear trend) · 0.005–0.02% weak, avoid · 0.02–0.05% good candidate · above 0.05% excellent (strong trend). Headline values include the candle now forming; the charts show completed candles.</p>
     </div>
 
     <div class="metric" id="s-book">
@@ -737,10 +804,11 @@ function renderDetail() {
     ['s-volatility', 'ATR', rupee(r.atr5), '', '14 candles, 5-min', `ATR = Wilder average of true range over 14 five-minute candles: ATR = (previous ATR × 13 + true range) ÷ 14`],
     ['s-volatility', 'ATR %', r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%', '', 'ATR as a share of price', `ATR % = ATR ÷ last price × 100`],
     ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', '+ve value · 1× = usual for this time', `Relative ATR = current ATR ÷ average ATR at the same time of day over the last 20 sessions`, rate('relAtr', r.relAtr)],
-    ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', 'value from 0 to 100 · 14 candles, 5-min', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`, rate('rsi', r.rsi)],
     ['s-momentum', 'Rate of change', pct(r.roc), tone(r.roc), 'over 10 candles (50 min)', `ROC % = (close now − close 10 candles ago) ÷ close 10 candles ago × 100`],
+    ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', 'base 50 · below 50 bearish · above 50 bullish · range 0 to 100', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`, rate('rsi', r.rsi)],
     ['s-trend', 'EMA 20', rupee(r.ema), '', r.priceVsEmaPct == null ? '' : 'price ' + signed(r.priceVsEmaPct) + '% vs EMA', `EMA = close × k + previous EMA × (1 − k), with k = 2 ÷ (20 + 1), on 5-minute closes`],
     ['s-trend', 'EMA slope %', pct(r.emaSlopePct, 3), tone(r.emaSlopePct), 'change in EMA over 5 candles', `EMA slope % = (EMA now − EMA 5 candles ago) ÷ EMA 5 candles ago × 100`],
+    ['s-trend', 'Normalized EMA slope %', pct(emaSlopePerCandle(r), 4), tone(r.emaSlopePct), 'EMA slope ÷ 5 candles = change per candle', `Normalized EMA slope % = EMA slope % ÷ number of candles (5)`, rateEmaSlope(emaSlopePerCandle(r))],
     ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : 'never below 0 · usually below 0.2%') : '₹' + price.format(r.spread) + ' bid to ask · never below 0 · usually below 0.2%', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`, rate('spreadPct', r.spreadPct)],
     ['s-book', 'Order book imbalance', signed(r.imbalance5), tone(r.imbalance5), r.book && !r.bookLive ? 'market closed · leftover book' : 'top 5 levels, −1 to +1', `Imbalance = (bid quantity − ask quantity) ÷ (bid quantity + ask quantity), over the top 5 levels`, r.bookLive ? rate('imbalance', r.imbalance5) : null],
     ['s-levels', 'Nearest support (pivot)', pivS.value, '', pivS.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. S1 = 2 × pivot − high, S2 = pivot − (high − low), S3 = low − 2 × (high − pivot). Shown: the closest level at or below the price`],
@@ -980,6 +1048,10 @@ function connect() {
   ws.onclose = () => { socketUp = false; schedule(); setTimeout(connect, retry); retry = Math.min(retry * 2, 15000); };
 }
 connect();
+// Keep --header-h equal to the header's real height, so the pinned stock list sits just below it.
+const setHeaderHeight = () => document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
+setHeaderHeight();
+new ResizeObserver(setHeaderHeight).observe(document.querySelector('header'));
 setInterval(renderStatus, 5000);
 window.addEventListener('resize', schedule);
 </script>
