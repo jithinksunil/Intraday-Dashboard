@@ -55,6 +55,8 @@
   #list button[aria-current="true"] { background: var(--hover); box-shadow: inset 3px 0 0 var(--accent); }
   #list button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .name { font-weight: 600; }
+  .exch { display: inline-block; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .05em; line-height: 15px; vertical-align: middle; }
+  h2 .exch { font-size: 11px; line-height: 17px; }
   .sub { color: var(--muted); font-size: 12px; }
   .up { color: var(--up); } .down { color: var(--down); }
   .pill { min-width: 58px; text-align: right; font-weight: 600; }
@@ -260,6 +262,7 @@ let socketUp = false;
 
 const $ = (id) => document.getElementById(id);
 const short = (sym) => sym.replace(/^[A-Z]+:/, '').replace(/-EQ$/, '');
+const exchange = (sym) => (sym.includes(':') ? sym.split(':')[0] : '');
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const price = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const compact = new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 2 });
@@ -301,7 +304,7 @@ function renderList() {
     const r = rows.get(sym) ?? {};
     const chg = r.changePct;
     return `<li><button data-sym="${esc(sym)}" aria-current="${sym === selected}">
-      <span><span class="name">${esc(short(sym))}</span><br><span class="sub num">${fmt(price, r.ltp)}${r.vwapDevPct == null ? '' : ` <span class="${r.vwapDevPct >= 0 ? 'up' : 'down'}" title="Price is ${r.vwapDevPct >= 0 ? 'above' : 'below'} VWAP${r.vwapDevAtr == null ? '' : ' by ' + Math.abs(r.vwapDevAtr).toFixed(2) + ' ATR'}">${r.vwapDevPct >= 0 ? '▲' : '▼'} ${r.vwapDevAtr == null ? 'VWAP' : Math.abs(r.vwapDevAtr).toFixed(1) + ' ATR'}</span>`}</span></span>
+      <span><span class="name">${esc(short(sym))}</span><span class="exch">${esc(exchange(sym))}</span><br><span class="sub num">${fmt(price, r.ltp)}${r.vwapDevPct == null ? '' : ` <span class="${r.vwapDevPct >= 0 ? 'up' : 'down'}" title="Price is ${r.vwapDevPct >= 0 ? 'above' : 'below'} VWAP${r.vwapDevAtr == null ? '' : ' by ' + Math.abs(r.vwapDevAtr).toFixed(2) + ' ATR'}">${r.vwapDevPct >= 0 ? '▲' : '▼'} ${r.vwapDevAtr == null ? 'VWAP' : Math.abs(r.vwapDevAtr).toFixed(1) + ' ATR'}</span>`}</span></span>
       <span class="sub num ${chg == null ? '' : chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span>
       <span class="pill num ${rate('rvol', r.rvol)?.grade ?? 'none'}" title="Relative volume${rate('rvol', r.rvol) ? ': ' + rate('rvol', r.rvol).label : ''}">${fmtRvol(r.rvol)}</span>
     </button></li>`;
@@ -779,7 +782,7 @@ function renderDetail() {
   const tpl = document.createElement('template');
   tpl.innerHTML = full;
   const header = `
-    <h2>${esc(short(selected))}</h2>
+    <h2>${esc(short(selected))} <span class="exch">${esc(exchange(selected))}</span></h2>
     <div class="price num">₹${fmt(price, r.ltp)} <span class="${chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span></div>`;
 
   const section = view && tpl.content.getElementById(view);
