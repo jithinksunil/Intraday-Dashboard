@@ -490,6 +490,10 @@ function tradePlan(r) {
 // Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
 const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance'], ['s-exec', 'Execution']];
 const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
+// The stock and section in view are remembered, so a reload comes back to the same place.
+const remember = (key, value) => { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* storage unavailable */ } };
+const recall = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
+if (!location.hash && SECTIONS.some(([s]) => s === recall('view'))) history.replaceState(null, '', '#' + recall('view'));
 let view = viewFromHash(); // null = tile overview, otherwise the id of the section being shown
 
 function renderDetail() {
@@ -713,6 +717,7 @@ async function loadCurves(sym) {
 
 function select(sym) {
   selected = sym;
+  remember('stock', sym);
   curves = null;
   renderList();
   renderDetail();
@@ -869,7 +874,7 @@ window.addEventListener('pointerdown', () => { pointerDown = true; });
 for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => { pointerDown = false; schedule(); });
 
 // Tiles and the back link are plain #links, so the browser's back button works between views.
-window.addEventListener('hashchange', () => { hideTip(); view = viewFromHash(); window.scrollTo(0, 0); schedule(); });
+window.addEventListener('hashchange', () => { hideTip(); view = viewFromHash(); remember('view', view); window.scrollTo(0, 0); schedule(); });
 
 var dirty = false; // var: schedule() can be called before this line runs (restoring a closed sidebar)
 function schedule() {
@@ -900,7 +905,7 @@ function connect() {
       order = msg.rows.map((r) => r.sym);
       msg.rows.forEach((r) => rows.set(r.sym, r));
       feed = msg.status;
-      if (!selected || !order.includes(selected)) select(order[0]); else loadCurves(selected);
+      if (!selected || !order.includes(selected)) select(order.includes(recall('stock')) ? recall('stock') : order[0]); else loadCurves(selected);
     } else if (msg.type === 'row') {
       applyRow(msg.row);
     } else if (msg.type === 'curves') {
