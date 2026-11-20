@@ -93,15 +93,19 @@
   table.levels th:first-child, table.levels td:first-child { text-align: left; }
   table.levels td { padding: 6px 8px; text-align: right; border-top: 1px solid var(--line); }
   table.levels tr.now td { background: var(--hover); font-weight: 600; }
-  .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 18px; }
-  @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (max-width: 640px) { .tiles { grid-template-columns: 1fr; } }
-  .tile { display: block; padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px; color: inherit; text-decoration: none; transition: border-color .12s, background .12s; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+  .tile { display: block; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; color: inherit; text-decoration: none; transition: border-color .12s, background .12s; }
   .tile:hover { background: var(--hover); border-color: var(--accent); }
   .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .tile-title { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
-  .tile-value { font-size: 28px; font-weight: 650; letter-spacing: -0.01em; margin-top: 10px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-  .tile-value.long { font-size: 20px; line-height: 1.7; }
+  .tile-title { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .tile-value { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin-top: 10px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .tile { position: relative; }
+  .info { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: none; border: 1px solid var(--muted); border-radius: 50%; font-size: 11px; font-weight: 700; font-style: italic; font-family: Georgia, serif; cursor: help; }
+  .info:hover { color: var(--text); border-color: var(--accent); }
+  .tip { display: none; position: absolute; left: -1px; right: -1px; top: calc(100% + 6px); z-index: 5; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); color: var(--text); font-size: 12.5px; line-height: 1.5; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
+  .tile:has(.info:hover) .tip, .tile:focus-visible .tip { display: block; }
+  .tile-group { margin-top: 12px; color: var(--muted); font-size: 11px; }
+  .tile-group::before { content: "in "; }
   .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .tile-verdict { margin: 10px 0 0; font-size: 13px; }
   .back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
@@ -467,20 +471,40 @@ function renderDetail() {
     el.innerHTML = `<a class="back" href="#">← All metrics</a>${header}<div class="jump">${chips}</div>${section.outerHTML}`;
     return;
   }
-  // Overview: one tile per section, showing its headline number and one-line reading.
-  const tiles = SECTIONS.map(([id, title]) => {
-    const sec = tpl.content.getElementById(id);
-    const big = sec.querySelector('.hero .big');
-    const label = sec.querySelector('.hero .label');
-    const verdictEl = sec.querySelector('.verdict');
-    const long = big.textContent.length > 12; // ranges such as ₹1,369.27 – ₹1,388.83
-    return `<a class="tile" href="#${id}">
-      <div class="tile-title">${title}<span aria-hidden="true">→</span></div>
-      <div class="tile-value ${long ? 'long' : ''} ${big.className.replace('big', '')}">${big.innerHTML}</div>
-      <div class="tile-label">${label.innerHTML}</div>
-      <p class="tile-verdict">${verdictEl ? verdictEl.innerHTML : ''}</p>
-    </a>`;
-  }).join('');
+  // Overview: one tile per calculation. Each opens the section that calculation belongs to.
+  const tone = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down');
+  const rupee = (v) => (v == null ? '–' : '₹' + price.format(v));
+  const pct = (v, d = 2) => (v == null ? '–' : signed(v, d) + '%');
+  const level = (lv) => (lv ? { value: rupee(lv.price), sub: (lv.name ? lv.name + ' · ' : '') + signed(lv.distancePct) + '% away' + (lv.broken ? ' · broken' : '') } : { value: '–', sub: '' });
+  const pivS = level(r.support), pivR = level(r.resistance), swS = level(r.swingLow), swR = level(r.swingHigh);
+  const TILES = [
+    ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'volume vs usual for this time', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`],
+    ['s-vwap', 'VWAP', rupee(r.vwap), '', 'average price traded today', `VWAP = Σ(price × volume) ÷ Σ(volume) for today's trades (taken from the exchange feed)`],
+    ['s-vwap', 'VWAP deviation', pct(r.vwapDevPct), tone(r.vwapDevPct), r.vwap == null ? '' : signed(r.ltp - r.vwap) + ' ₹ from VWAP', `VWAP deviation % = (last price − VWAP) ÷ VWAP × 100`],
+    ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'distance from VWAP in ATRs', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`],
+    ['s-volatility', 'True range', rupee(r.tr5), '', 'last 5-min candle', `True range = max(high − low, |high − previous close|, |low − previous close|) of the last completed 5-minute candle`],
+    ['s-volatility', 'ATR', rupee(r.atr5), '', '14 candles, 5-min', `ATR = Wilder average of true range over 14 five-minute candles: ATR = (previous ATR × 13 + true range) ÷ 14`],
+    ['s-volatility', 'ATR %', r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%', '', 'ATR as a share of price', `ATR % = ATR ÷ last price × 100`],
+    ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', 'volatility vs its usual level', `Relative ATR = current ATR ÷ average ATR over the previous 100 five-minute candles`],
+    ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', '14 candles, 5-min', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`],
+    ['s-momentum', 'Rate of change', pct(r.roc), tone(r.roc), 'over 10 candles (50 min)', `ROC % = (close now − close 10 candles ago) ÷ close 10 candles ago × 100`],
+    ['s-trend', 'EMA 20', rupee(r.ema), '', r.priceVsEmaPct == null ? '' : 'price ' + signed(r.priceVsEmaPct) + '% vs EMA', `EMA = close × k + previous EMA × (1 − k), with k = 2 ÷ (20 + 1), on 5-minute closes`],
+    ['s-trend', 'EMA slope %', pct(r.emaSlopePct, 3), tone(r.emaSlopePct), 'change in EMA over 5 candles', `EMA slope % = (EMA now − EMA 5 candles ago) ÷ EMA 5 candles ago × 100`],
+    ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : '') : '₹' + price.format(r.spread) + ' bid to ask', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`],
+    ['s-book', 'Order book imbalance', signed(r.imbalance5), tone(r.imbalance5), r.book && !r.bookLive ? 'market closed · leftover book' : 'top 5 levels, −1 to +1', `Imbalance = (bid quantity − ask quantity) ÷ (bid quantity + ask quantity), over the top 5 levels`],
+    ['s-levels', 'Nearest support (pivot)', pivS.value, '', pivS.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. S1 = 2 × pivot − high, S2 = pivot − (high − low), S3 = low − 2 × (high − pivot). Shown: the closest level at or below the price`],
+    ['s-levels', 'Nearest resistance (pivot)', pivR.value, '', pivR.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. R1 = 2 × pivot − low, R2 = pivot + (high − low), R3 = high + 2 × (pivot − low). Shown: the closest level above the price`],
+    ['s-swings', 'Nearest support (swing)', swS.value, '', swS.sub, `Last swing low = low of the most recent 5-minute candle whose low is the lowest of 5 candles (itself and 2 on each side)`],
+    ['s-swings', 'Nearest resistance (swing)', swR.value, '', swR.sub, `Last swing high = high of the most recent 5-minute candle whose high is the highest of 5 candles (itself and 2 on each side)`],
+  ];
+  const sectionName = Object.fromEntries(SECTIONS);
+  const tiles = TILES.map(([id, title, value, cls, sub, formula], n) => `<a class="tile" href="#${id}" aria-describedby="tip-${n}">
+      <div class="tile-title">${title}<span class="info" aria-hidden="true">i</span></div>
+      <div class="tip" role="tooltip" id="tip-${n}">${formula}</div>
+      <div class="tile-value ${cls}">${value}</div>
+      <div class="tile-label">${sub || '&nbsp;'}</div>
+      <div class="tile-group">${sectionName[id]}</div>
+    </a>`).join('');
   el.innerHTML = `${header}<div class="tiles">${tiles}</div>`;
 }
 
@@ -533,6 +557,9 @@ $('list').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-sym]');
   if (b) select(b.dataset.sym);
 });
+
+// The info icon sits inside the tile link; a click on it shows the formula (via :hover) without navigating.
+$('detail').addEventListener('click', (e) => { if (e.target.closest('.info')) e.preventDefault(); });
 
 // Tiles and the back link are plain #links, so the browser's back button works between views.
 window.addEventListener('hashchange', () => { view = viewFromHash(); window.scrollTo(0, 0); schedule(); });
