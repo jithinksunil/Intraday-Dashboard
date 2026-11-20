@@ -153,6 +153,12 @@
   #tooltip .tt-rows dt:first-of-type, #tooltip .tt-rows dt:first-of-type + dd { border-top: 0; }
   #tooltip .tt-rows dt { font-weight: 650; }
   #tooltip .tt-rows dd { color: var(--text); border-left: 1px solid var(--line); }
+  #tooltip .tt-tags { border: 1px solid var(--line); border-radius: 7px; background: var(--bg); font-size: 12px; line-height: 1.45; }
+  #tooltip .tt-tag { padding: 8px 9px; border-top: 1px solid var(--line); }
+  #tooltip .tt-tag:first-child { border-top: 0; }
+  #tooltip .tt-tag .badge { margin: 0 4px 2px 0; }
+  #tooltip .tt-when { color: var(--muted); margin: 4px 0 2px; }
+  #tooltip .tt-key { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
   #tooltip .tt-list { margin: 0; padding-left: 17px; font-size: 12.5px; line-height: 1.5; }
   #tooltip .tt-list li + li { margin-top: 3px; }
   @media (prefers-reduced-motion: reduce) { #tooltip { transition: none; transform: none; } }
@@ -1026,8 +1032,19 @@ $('list').addEventListener('click', (e) => {
 
 // ----- "How to interpret" text for each overview tile, keyed by the tile's title. -----
 // what: what the number tells you. read: [value or tag, meaning]. use: what to check it against. mind: limits.
+// tags (only on tiles that carry a tag): [label or labels, grade, when it shows, what it means]. The label
+// and grade must match what the rating functions above produce, so the tooltip shows the tag as the tile does.
+// tagNote: when the tile shows no tag at all.
 const GUIDE = {
   'Sell volume share': {
+    tags: [
+      ['Strong selling dominance', 'sell', 'Sell share above 60%.', 'More than 60 of every 100 classified shares in the last 15 minutes were sold at the buyer\'s price. Sellers are in clear control of trading. If price is not falling with it, buyers are absorbing the selling.'],
+      ['Moderate selling dominance', 'sell weak', 'Sell share from 55% to 60%.', 'Sellers have an edge, but not an overwhelming one. Treat it as a lean and confirm it with Sell volume change and CVD trend.'],
+      ['Balanced', 'neutral', 'Sell share above 45% and below 55%.', 'Aggressive buying and selling are close to equal. Order flow gives no direction here; rely on trend and price levels instead.'],
+      ['Moderate buying dominance', 'buy weak', 'Sell share from 40% to 45%.', 'Buyers have an edge, but not an overwhelming one: 55% to 60% of the volume was bought at the seller\'s price.'],
+      ['Strong buying dominance', 'buy', 'Sell share below 40%.', 'More than 60 of every 100 classified shares were bought at the seller\'s price. Buyers are in clear control of trading. If price is not rising with it, sellers are absorbing the buying.'],
+    ],
+    tagNote: 'No tag while the tile says "collecting": the first 15 minutes of unbroken live data are not complete yet.',
     what: 'Of all the shares traded in the last 15 minutes, the percentage where the seller was the impatient side and sold at the buyer\'s price. The rest was bought by impatient buyers. It shows which side is in control right now.',
     read: [
       ['Above 60%', 'Strong selling dominance. Sellers are clearly in control.'],
@@ -1048,6 +1065,12 @@ const GUIDE = {
     ],
   },
   'Sell volume change': {
+    tags: [
+      ['Selling pressure increasing ↑', 'sell', 'Sell volume is up more than 20% on the previous 15 minutes.', 'Aggressive sellers traded over a fifth more than in the window before. Selling is speeding up. This is the only red tag on this tile.'],
+      ['Selling pressure flat →', 'neutral', 'The change is between −20% and +20%.', 'Sellers are trading at about the same pace as before. Nothing has changed on the sell side.'],
+      ['Selling pressure decreasing ↓', 'neutral', 'Sell volume is down more than 20% on the previous 15 minutes.', 'Aggressive sellers traded over a fifth less. Sellers are backing off. It is grey, not green, because less selling is not the same as buying: check Buy volume change before reading it as bullish.'],
+    ],
+    tagNote: 'No tag while the tile says "collecting": it needs 30 minutes of unbroken live data.',
     what: 'Whether aggressive selling is growing or fading. It compares the sell volume of the last 15 minutes with the sell volume of the 15 minutes before that.',
     read: [
       ['Above +20%', 'Selling pressure increasing. Sellers are getting more aggressive.'],
@@ -1070,6 +1093,12 @@ const GUIDE = {
     ],
   },
   'Buy volume change': {
+    tags: [
+      ['Buying pressure increasing ↑', 'buy', 'Buy volume is up more than 20% on the previous 15 minutes.', 'Aggressive buyers traded over a fifth more than in the window before. Buying is speeding up. This is the only green tag on this tile.'],
+      ['Buying pressure flat →', 'neutral', 'The change is between −20% and +20%.', 'Buyers are trading at about the same pace as before. Nothing has changed on the buy side.'],
+      ['Buying pressure decreasing ↓', 'neutral', 'Buy volume is down more than 20% on the previous 15 minutes.', 'Aggressive buyers traded over a fifth less. Buyers are backing off. It is grey, not red, because less buying is not the same as selling: check Sell volume change before reading it as bearish.'],
+    ],
+    tagNote: 'No tag while the tile says "collecting": it needs 30 minutes of unbroken live data.',
     what: 'Whether aggressive buying is growing or fading. It compares the buy volume of the last 15 minutes with the buy volume of the 15 minutes before that.',
     read: [
       ['Above +20%', 'Buying pressure increasing. Buyers are getting more aggressive.'],
@@ -1111,6 +1140,14 @@ const GUIDE = {
     ],
   },
   'CVD trend': {
+    tags: [
+      ['Buying aggression increasing ↑', 'buy', 'CVD trend is Rising: over the last 30 minutes CVD climbed by more than 5% of an average candle\'s volume per 5-minute candle.', 'Net aggressive buying has been steady for half an hour, not one short burst. Buyers are gaining ground.'],
+      ['Selling aggression increasing ↓', 'sell', 'CVD trend is Falling: over the last 30 minutes CVD dropped by more than 5% of an average candle\'s volume per 5-minute candle.', 'Net aggressive selling has been steady for half an hour, not one short burst. Sellers are gaining ground.'],
+      ['Balanced order flow →', 'neutral', 'CVD trend is Sideways: the slope is inside that ±5% band.', 'Aggressive buying and selling have roughly cancelled out over 30 minutes. Neither side is gaining.'],
+      ['Potential bullish divergence', 'buy weak', 'Price made a lower swing low than the one before, but CVD at that low was higher.', 'Price fell further on less net selling: sellers needed less force, or had less, to get there. An early warning that the fall is tiring, not a buy signal. It replaces the trend tag while it applies; the value above still shows the trend.'],
+      ['Potential bearish divergence', 'sell weak', 'Price made a higher swing high than the one before, but CVD at that high was lower.', 'Price rose further on less net buying. An early warning that the rise is tiring, not a sell signal. It replaces the trend tag while it applies; the value above still shows the trend.'],
+    ],
+    tagNote: 'Divergences use confirmed swings on completed 5-minute candles, so they appear about 10 minutes after the swing. If both kinds apply, the more recent one is shown. No tag while the tile says "collecting".',
     what: 'The direction CVD has been heading over the last 30 minutes. It shows whether aggressive buyers or aggressive sellers are currently gaining ground.',
     read: [
       ['Rising', 'Buying aggression increasing. Buyers are steadily doing more of the pushing.'],
@@ -1135,6 +1172,14 @@ const GUIDE = {
     ],
   },
   'RVOL': {
+    tags: [
+      ['Below normal', 'bad', 'RVOL under 1×.', 'The stock has traded less than it usually has by this time of day. Interest is low: breakouts fail more often and orders fill more slowly.'],
+      ['Slightly above normal', 'average', 'RVOL from 1× to under 1.5×.', 'An ordinary to mildly busy day. Tradable, but nothing unusual is drawing traders to the stock.'],
+      ['Good', 'good', 'RVOL from 1.5× to under 2×.', 'At least half as much volume again as usual. Enough extra participation for moves to follow through.'],
+      ['Very good', 'verygood', 'RVOL from 2× to under 3×.', 'Two to three times the usual volume. Strong participation; the stock is in play today.'],
+      ['Excellent', 'excellent', 'RVOL of 3× or more.', 'At least three times the usual volume. Something is driving the stock, typically news, results or a large participant. Moves follow through best here, and they are also fast.'],
+    ],
+    tagNote: 'The tag rates how much interest there is, not the direction. No tag before 09:15, when RVOL has no value.',
     what: 'Relative volume: how much the stock has traded so far today compared with what it normally trades by this time of day (average of the last 20 sessions). It shows whether the stock is "in play" today.',
     read: [
       ['Below 1×', 'Below normal. Less interest than usual; moves are less reliable.'],
@@ -1155,6 +1200,14 @@ const GUIDE = {
     ],
   },
   'Recent RVOL': {
+    tags: [
+      ['Below normal', 'bad', 'Recent RVOL under 1×.', 'The last 15 minutes traded less than those same minutes usually do. The stock is quiet right now, even if the day RVOL is high.'],
+      ['Slightly above normal', 'average', 'Recent RVOL from 1× to under 1.5×.', 'About the usual activity for this part of the day, or a little more.'],
+      ['Good', 'good', 'Recent RVOL from 1.5× to under 2×.', 'At least half as much volume again as usual for these minutes. The stock is active now.'],
+      ['Very good', 'verygood', 'Recent RVOL from 2× to under 3×.', 'Two to three times the usual volume for these minutes. Strong activity right now.'],
+      ['Excellent', 'excellent', 'Recent RVOL of 3× or more.', 'At least three times the usual volume for these minutes. A burst of activity is under way; a breakout happening now has real volume behind it.'],
+    ],
+    tagNote: 'Same bands as RVOL, applied to the last 15 minutes only. No tag before 09:30, when the first 15-minute window is not complete.',
     what: 'Relative volume for the last 15 minutes only: the volume traded in those minutes compared with what the stock normally trades in the same 15 minutes of the day. It shows whether the stock is busy right now.',
     read: [
       ['Below 1×', 'Below normal. Quiet right now, whatever the day RVOL says.'],
@@ -1177,6 +1230,12 @@ const GUIDE = {
     ],
   },
   'RVOL volume trend': {
+    tags: [
+      ['Volume rising ↑', 'verygood', 'Recent RVOL is up more than 20% on 15 minutes earlier.', 'Activity is building faster than the time of day explains. Interest is growing, so a move under way is more likely to follow through.'],
+      ['Volume steady →', 'neutral', 'The change is between −20% and +20%.', 'Activity is holding at its current level, whatever that level is. Read Recent RVOL to see whether that level is high or low.'],
+      ['Volume falling ↓', 'average', 'Recent RVOL is down more than 20% on 15 minutes earlier.', 'Activity is fading faster than the time of day explains. The burst is ending; be careful chasing a move that started on the earlier volume.'],
+    ],
+    tagNote: 'No tag before 09:45, when two 15-minute windows do not exist yet.',
     what: 'Whether activity is building or fading, with the time of day removed. It compares Recent RVOL now with Recent RVOL 15 minutes earlier.',
     read: [
       ['Above +20%', 'Volume rising. Interest is building; moves are more likely to follow through.'],
@@ -1250,6 +1309,13 @@ const GUIDE = {
     ],
   },
   'Normalized VWAP deviation': {
+    tags: [
+      ['Avoid', 'neutral', 'Less than 0.5 ATR from VWAP, on either side.', 'Price is within half a typical 5-minute move of VWAP. That is ordinary noise, so there is no deviation-based setup to trade.'],
+      ['Moderate', 'average', 'From 0.5 to under 1 ATR from VWAP.', 'Price has moved away from VWAP, but by less than one typical candle. Lower priority: the distance is not yet meaningful.'],
+      ['Good candidate', 'verygood', 'From 1 to 1.5 ATR from VWAP.', 'Price is a full typical move or more away from VWAP. Worth evaluating as a setup.'],
+      ['Excellent candidate', 'excellent', 'More than 1.5 ATR from VWAP.', 'Price is strongly extended from VWAP. The clearest case to evaluate, either for the move continuing or for a return toward VWAP.'],
+    ],
+    tagNote: '"Candidate" means worth evaluating, not a signal. The tag rates only the distance, the same on both sides of VWAP; trend, volume and nearby levels decide between continuation and reversal.',
     what: 'The distance from VWAP measured in ATRs, the stock\'s typical 5-minute move. Because it is scaled to each stock\'s own volatility, it can be compared between stocks. The sign shows the side; the tag rates the size.',
     read: [
       ['Positive / negative', 'Above VWAP / below VWAP.'],
@@ -1317,6 +1383,16 @@ const GUIDE = {
     ],
   },
   'Relative ATR': {
+    tags: [
+      ['Bad', 'bad', 'Relative ATR under 0.8×.', 'Candles are much smaller than usual for this time of day. There is not enough movement to reach a target before costs and time wear the trade down.'],
+      ['Normal · avoid', 'bad', 'Relative ATR from 0.8× to under 1×.', 'Movement is in the normal range but on the quiet side of it. Avoided because a stock moving less than usual rarely gives a clean intraday move.'],
+      ['Normal · good', 'good', 'Relative ATR from 1× to under 1.2×.', 'The stock is moving as it usually does at this time, or slightly more. Usable.'],
+      ['Very good', 'verygood', 'Relative ATR from 1.2× to under 1.5×.', 'Movement is elevated: noticeably more range than usual, while stops stay a sensible size.'],
+      ['Exceptional', 'excellent', 'Relative ATR from 1.5× to under 2×.', 'High movement that is still manageable. The best band: plenty of range for the target, and risk can still be controlled.'],
+      ['Very high · avoid', 'bad', 'Relative ATR from 2× to 3×.', 'Candles are two to three times their usual size. Stops have to be so wide that position size becomes small, and price swings through levels.'],
+      ['Extreme · avoid', 'bad', 'Relative ATR above 3×.', 'Erratic movement, usually around news. Price can jump past a stop, so the loss can be larger than planned.'],
+    ],
+    tagNote: 'Red appears at both ends: too little movement and too much are both avoided. The usable range is 1× to 2×.',
     what: 'Today\'s volatility compared with what is normal for this stock at this time of day (average of the last 20 sessions). 1× is a normal day.',
     read: [
       ['Below 0.8×', 'Bad. Much quieter than usual; not enough movement.'],
@@ -1357,6 +1433,15 @@ const GUIDE = {
     ],
   },
   'RSI': {
+    tags: [
+      ['Strong bearish ↓', 'sell', 'RSI below 30.', 'Down moves have heavily outweighed up moves over the last 14 candles. Strong downward momentum. Many traders also call this "oversold", where a bounce becomes more likely.'],
+      ['Normal bearish ↓', 'sell', 'RSI from 30 to under 40.', 'Clear downward momentum without being extreme. The typical reading in a healthy downtrend.'],
+      ['Weak bearish ↓', 'sell weak', 'RSI from 40 to under 50.', 'Losses slightly outweigh gains. A mild downward lean that can easily flip; common in sideways markets.'],
+      ['Weak bullish ↑', 'buy weak', 'RSI from 50 to under 60.', 'Gains slightly outweigh losses. A mild upward lean that can easily flip; common in sideways markets.'],
+      ['Normal bullish ↑', 'buy', 'RSI from 60 to 70.', 'Clear upward momentum without being extreme. The typical reading in a healthy uptrend.'],
+      ['Strong bullish ↑', 'buy', 'RSI above 70.', 'Up moves have heavily outweighed down moves over the last 14 candles. Strong upward momentum. Many traders also call this "overbought", where a pause or pullback becomes more likely.'],
+    ],
+    tagNote: 'The arrow is the direction of momentum, not an instruction to buy or sell.',
     what: 'Relative Strength Index: compares the size of recent up moves with recent down moves over 14 five-minute candles, on a scale of 0 to 100. 50 is the middle; above it buyers have had the upper hand, below it sellers.',
     read: [
       ['Below 30', 'Strong bearish momentum.'],
@@ -1412,6 +1497,13 @@ const GUIDE = {
     ],
   },
   'Normalized EMA slope %': {
+    tags: [
+      ['Avoid · no clear trend', 'neutral', 'Slope within ±0.005% per candle.', 'The trend line is flat. Price is ranging, so trend-following setups have nothing to follow.'],
+      [['Weak bullish trend · avoid', 'Weak bearish trend · avoid'], 'average', 'Slope larger than 0.005% and under 0.02% per candle, up or down.', 'A trend exists but it is too slow: not strong enough for a momentum trade and not flat enough for a range trade. Avoided for both.'],
+      [['Good bullish candidate', 'Good bearish candidate'], 'verygood', 'Slope from 0.02% to 0.05% per candle, up or down.', 'A moderate, steady trend. Worth evaluating for a trade in the direction named in the tag.'],
+      [['Excellent · strong bullish trend', 'Excellent · strong bearish trend'], 'excellent', 'Slope above 0.05% per candle, up or down.', 'The trend line is moving quickly. The strongest trend reading; it can also come late in a move, so check how far price already is from VWAP and the EMA.'],
+    ],
+    tagNote: 'The colour rates the strength of the trend, not its direction: a strong bearish trend is green too. The word bullish or bearish in the tag gives the direction.',
     what: 'The EMA slope divided by 5, giving the average change of the trend line per candle. The sign is the direction; the size is the strength of the trend, which the tag rates.',
     read: [
       ['Within ±0.005', 'Avoid · no clear trend. Flat.'],
@@ -1430,6 +1522,12 @@ const GUIDE = {
     ],
   },
   'Spread %': {
+    tags: [
+      ['Excellent', 'excellent', 'Spread of 0.05% or less.', 'The gap between the best bid and ask is tiny. Entering and exiting with market orders costs almost nothing, so the stock is very liquid.'],
+      ['Very good', 'verygood', 'Spread above 0.05% and up to 0.1%.', 'A small, acceptable cost. Fine for intraday trades as long as the target is several times the spread.'],
+      ['Bad · not considered', 'bad', 'Spread above 0.1%.', 'Crossing the spread on entry and exit takes too large a part of a typical intraday move. The stock is left out of consideration while the spread stays this wide.'],
+    ],
+    tagNote: 'No tag when the market is closed: there is no live bid and ask to measure.',
     what: 'The gap between the best buy price (bid) and the best sell price (ask), as a percentage of the price. It is a cost: you lose roughly this much every time you enter and exit with market orders.',
     read: [
       ['0 to 0.05%', 'Excellent. Very liquid; entering and exiting costs almost nothing.'],
@@ -1448,6 +1546,12 @@ const GUIDE = {
     ],
   },
   'Order book imbalance': {
+    tags: [
+      ['More visible buying', 'buy', 'Imbalance above 0.', 'More quantity is waiting to buy than to sell in the top 5 price levels. Demand is stacked close under the price. "Visible" because these are displayed orders only, which may be cancelled.'],
+      ['Balanced', 'neutral', 'Imbalance exactly 0.', 'The same quantity is waiting on both sides. Rare, and it lasts only a moment.'],
+      ['More visible selling', 'sell', 'Imbalance below 0.', 'More quantity is waiting to sell than to buy in the top 5 price levels. Supply is stacked close above the price. "Visible" because these are displayed orders only, which may be cancelled.'],
+    ],
+    tagNote: 'The tag gives the side only, not the size: +0.02 and +0.80 both show "More visible buying", so read the number. No tag when the market is closed, because the leftover book means nothing.',
     what: 'Compares the quantity waiting to buy with the quantity waiting to sell in the top 5 price levels, on a scale of −1 to +1. It shows which side has more orders queued close to the price right now.',
     read: [
       ['Positive', 'More visible buying. More quantity is bid than offered near the price.'],
@@ -1468,6 +1572,12 @@ const GUIDE = {
     ],
   },
   'Ask quantity trend': {
+    tags: [
+      ['Ask quantity increasing ↑', 'sell weak', 'Average sell quantity in the book is up more than 10% on the previous 15 minutes.', 'More shares are queued for sale above the price. Supply is building, so rises are likely to meet resistance. Leans to the sell side.'],
+      ['Ask quantity flat →', 'neutral', 'The change is between −10% and +10%.', 'The amount offered for sale has not really changed.'],
+      ['Ask quantity reducing ↓', 'buy weak', 'Average sell quantity in the book is down more than 10% on the previous 15 minutes.', 'Fewer shares are queued for sale above the price, because buyers took them or sellers withdrew them. Less resistance overhead. Leans to the buy side.'],
+    ],
+    tagNote: 'The outline is always dashed: resting orders can be cancelled, so this is a weak reading even when the change is large. No tag while the tile says "collecting".',
     what: 'Whether the total quantity waiting to be sold across the whole order book is growing or shrinking: the average over the 15 minutes ending now against the 15 minutes before. Ask quantity is supply sitting above the price.',
     read: [
       ['Above +10%', 'Ask quantity increasing. More sellers are queuing: resistance is building.'],
@@ -1491,6 +1601,12 @@ const GUIDE = {
     ],
   },
   'Bid quantity trend': {
+    tags: [
+      ['Bid quantity increasing ↑', 'buy weak', 'Average buy quantity in the book is up more than 10% on the previous 15 minutes.', 'More shares are queued to be bought below the price. Demand is building, so dips are likely to find support. Leans to the buy side.'],
+      ['Bid quantity flat →', 'neutral', 'The change is between −10% and +10%.', 'The amount bid for has not really changed.'],
+      ['Bid quantity reducing ↓', 'sell weak', 'Average buy quantity in the book is down more than 10% on the previous 15 minutes.', 'Fewer shares are queued to be bought below the price, because sellers hit them or buyers withdrew them. Less support underneath. Leans to the sell side.'],
+    ],
+    tagNote: 'The outline is always dashed: resting orders can be cancelled, so this is a weak reading even when the change is large. No tag while the tile says "collecting".',
     what: 'Whether the total quantity waiting to be bought across the whole order book is growing or shrinking: the average over the 15 minutes ending now against the 15 minutes before. Bid quantity is demand sitting below the price.',
     read: [
       ['Above +10%', 'Bid quantity increasing. More buyers are queuing: support is building.'],
@@ -1660,8 +1776,17 @@ function guideHtml(title) {
   const g = GUIDE[title];
   if (!g) return '<div class="tt-note">No interpretation notes for this tile yet.</div>';
   const list = (items) => `<ul class="tt-list">${items.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+  // Tags are drawn with the same badge as on the tile, so each explanation sits under the tag it explains.
+  const directional = (g.tags ?? []).some(([, grade]) => /buy|sell/.test(grade));
+  const key = directional
+    ? 'Colours: green leans to buyers, red to sellers, grey is neutral. A dashed outline marks a weaker reading.'
+    : 'Colours: green is best, then teal, blue and amber. Red is bad and grey is neutral.';
+  const tags = !g.tags ? '' : `<div class="tt-h">What each tag means</div>
+    <div class="tt-tags">${g.tags.map(([label, grade, when, meaning]) => `<div class="tt-tag">${[].concat(label).map((l) => badge({ grade, label: l })).join('')}<div class="tt-when">Shown when: ${when}</div><div>${meaning}</div></div>`).join('')}</div>
+    <p class="tt-key">${g.tagNote ? g.tagNote + ' ' : ''}${key}</p>`;
   return `<div class="tt-h">What it tells you</div><p class="tt-p">${g.what}</p>
     <div class="tt-h">How to read it</div><dl class="tt-rows">${g.read.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>
+    ${tags}
     <div class="tt-h">Check it against</div>${list(g.use)}
     <div class="tt-h">Keep in mind</div>${list(g.mind)}`;
 }
