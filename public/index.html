@@ -889,7 +889,9 @@ function renderDetail() {
   }
   // Overview: one tile per calculation. Each opens the section that calculation belongs to.
   const level = (lv) => (lv ? { value: rupee(lv.price), sub: (lv.name ? lv.name + ' · ' : '') + signed(lv.distancePct) + '% away' + (lv.broken ? ' · broken' : '') } : { value: '–', sub: '' });
-  const pivS = level(r.support), pivR = level(r.resistance), swS = level(r.swingLow), swR = level(r.swingHigh);
+  // With pivots known, a missing level means the price is beyond the outermost one, not that data is missing.
+  const beyond = (lv, text) => (lv || !r.pivots ? level(lv) : { value: '–', sub: text });
+  const pivS = beyond(r.support, 'none · price is below S3, the lowest pivot level'), pivR = beyond(r.resistance, 'none · price is above R3, the highest pivot level'), swS = level(r.swingLow), swR = level(r.swingHigh);
   const TILES = [
     ['s-flow', 'Sell volume share', f?.sellShare == null ? '–' : f.sellShare.toFixed(1) + '%', '', f?.sellShare == null ? waitText(f?.minutesUntilShare) : `buy ${f.buyShare.toFixed(1)}% · last 15 min · ${EST}`, `Sell volume share % = sell volume ÷ (buy volume + sell volume) × 100`, f?.sellShare == null ? null : FLOW_DOMINANCE[f.dominance]],
     ['s-flow', 'Sell volume change', pct(f?.sellChangePct, 0), '', f?.sellChangePct == null ? waitText(f?.minutesUntilChange) : `vs previous 15 min · ${EST}`, `Sell volume change % = (recent sell volume − previous sell volume) ÷ previous sell volume × 100`, pressureRating('sell', f?.sellChange)],
