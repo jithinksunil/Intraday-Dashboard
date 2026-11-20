@@ -8,12 +8,12 @@
   :root {
     color-scheme: light dark;
     --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6eb; --text: #15181d; --muted: #68707d;
-    --accent: #2f6fed; --up: #10895a; --down: #c8372d; --hot: #b45309; --hover: #f0f3f8; --avg: #9aa3b2; --tip-bg: #ffffff;
+    --accent: #2f6fed; --up: #10895a; --down: #c8372d; --hot: #b45309; --hover: #f0f3f8; --avg: #9aa3b2; --tip-bg: #ffffff; --good: #0e8f8f;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1216; --panel: #171b21; --line: #272d36; --text: #e8ebf0; --muted: #8b95a5;
-      --accent: #6b9bff; --up: #3ecf8e; --down: #ff7a6e; --hot: #f5a524; --hover: #1e242c; --avg: #6a7484; --tip-bg: #1f252e;
+      --accent: #6b9bff; --up: #3ecf8e; --down: #ff7a6e; --hot: #f5a524; --hover: #1e242c; --avg: #6a7484; --tip-bg: #1f252e; --good: #4fd1c5;
     }
   }
   * { box-sizing: border-box; }
@@ -29,6 +29,15 @@
   @media (max-width: 760px) { main { grid-template-columns: 1fr; } }
   main.closed { grid-template-columns: 1fr; }
   main.closed nav { display: none; }
+  .head-right { display: flex; align-items: center; gap: 18px; }
+  .risk { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .risk-box { display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--text); }
+  .risk-box:focus-within { border-color: var(--accent); }
+  .risk input { width: 78px; border: 0; background: none; color: inherit; font: inherit; font-variant-numeric: tabular-nums; outline: none; }
+  @media (max-width: 760px) { .risk { display: none; } }
+  .ladder { display: grid; gap: 6px; margin: 4px 0 18px; }
+  .ladder div { display: flex; justify-content: space-between; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .ladder .t { border-left: 3px solid var(--up); } .ladder .e { border-left: 3px solid var(--accent); } .ladder .s { border-left: 3px solid var(--down); }
   .head-left { display: flex; align-items: center; gap: 12px; }
   #toggle { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
   #toggle:hover { background: var(--hover); }
@@ -46,8 +55,11 @@
   .sub { color: var(--muted); font-size: 12px; }
   .up { color: var(--up); } .down { color: var(--down); }
   .pill { min-width: 58px; text-align: right; font-weight: 600; }
-  .pill.hot { color: var(--hot); }
-  .pill.quiet { color: var(--muted); font-weight: 500; }
+  .pill.excellent { color: var(--up); }
+  .pill.verygood { color: var(--good); }
+  .pill.good { color: var(--accent); }
+  .pill.average { color: var(--hot); }
+  .pill.bad, .pill.none { color: var(--muted); font-weight: 500; }
   #detail { padding: 20px 22px; min-height: 420px; }
   #detail h2 { margin: 0; font-size: 20px; }
   .price { color: var(--muted); margin-top: 2px; }
@@ -120,6 +132,25 @@
   #tooltip .tt-eq b { color: var(--accent); font-weight: 600; }
   #tooltip .tt-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
   @media (prefers-reduced-motion: reduce) { #tooltip { transition: none; transform: none; } }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 650; letter-spacing: .01em; vertical-align: middle; border: 1px solid currentColor; background: color-mix(in srgb, currentColor 13%, transparent); }
+  .badge.excellent { color: var(--up); }
+  .badge.verygood { color: var(--good); }
+  .badge.good { color: var(--accent); }
+  .badge.average { color: var(--hot); }
+  .badge.bad, .badge.sell { color: var(--down); }
+  .badge.buy { color: var(--up); }
+  .badge.neutral { color: var(--muted); }
+  .badge.weak { border-style: dashed; background: none; font-weight: 600; }
+  .tile.rated.weak { border-left-style: dashed; }
+  .tile-rating { margin-top: 10px; min-height: 22px; }
+  .tile.rated { border-left: 3px solid var(--line); }
+  .tile.rated.excellent { border-left-color: var(--up); }
+  .tile.rated.verygood { border-left-color: var(--good); }
+  .tile.rated.good { border-left-color: var(--accent); }
+  .tile.rated.average { border-left-color: var(--hot); }
+  .tile.rated.bad, .tile.rated.sell { border-left-color: var(--down); }
+  .tile.rated.buy { border-left-color: var(--up); }
+  .tile.rated.neutral { border-left-color: var(--muted); }
   .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .tile-verdict { margin: 10px 0 0; font-size: 13px; }
   .back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
@@ -136,7 +167,11 @@
     <button id="toggle" type="button" aria-controls="stocks" aria-expanded="true">☰ <span id="toggle-text">Hide stocks</span></button>
     <h1>Trading dashboard</h1>
   </div>
-  <div id="status" role="status">Connecting…</div>
+  <div class="head-right">
+    <label class="risk">Max risk per trade <span class="risk-box">₹<input id="max-risk" type="number" min="1" step="100" inputmode="decimal" aria-describedby="risk-help"></span></label>
+    <span id="risk-help" hidden>Used by the Execution section to size positions.</span>
+    <div id="status" role="status">Connecting…</div>
+  </div>
 </header>
 <main>
   <nav class="panel" id="stocks" aria-label="Stocks"><ul id="list"></ul></nav>
@@ -161,7 +196,6 @@ const fmtRvol = (v) => (v == null ? '–' : v.toFixed(2) + '×');
 const clock = (ms) => new Date(ms).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
 const dayText = (ms) => new Date(ms).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' });
 const istDay = (ms) => Math.floor((ms + 19800000) / 86400000);
-const rvolClass = (v) => (v == null ? 'quiet' : v >= 1.5 ? 'hot' : v < 0.7 ? 'quiet' : '');
 
 function verdict(v) {
   if (v == null) return '';
@@ -197,7 +231,7 @@ function renderList() {
     return `<li><button data-sym="${esc(sym)}" aria-current="${sym === selected}">
       <span><span class="name">${esc(short(sym))}</span><br><span class="sub num">${fmt(price, r.ltp)}${r.vwapDevPct == null ? '' : ` <span class="${r.vwapDevPct >= 0 ? 'up' : 'down'}" title="Price is ${r.vwapDevPct >= 0 ? 'above' : 'below'} VWAP${r.vwapDevAtr == null ? '' : ' by ' + Math.abs(r.vwapDevAtr).toFixed(2) + ' ATR'}">${r.vwapDevPct >= 0 ? '▲' : '▼'} ${r.vwapDevAtr == null ? 'VWAP' : Math.abs(r.vwapDevAtr).toFixed(1) + ' ATR'}</span>`}</span></span>
       <span class="sub num ${chg == null ? '' : chg >= 0 ? 'up' : 'down'}">${chg == null ? '' : (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'}</span>
-      <span class="pill num ${rvolClass(r.rvol)}" title="Relative volume">${fmtRvol(r.rvol)}</span>
+      <span class="pill num ${rate('rvol', r.rvol)?.grade ?? 'none'}" title="Relative volume${rate('rvol', r.rvol) ? ': ' + rate('rvol', r.rvol).label : ''}">${fmtRvol(r.rvol)}</span>
     </button></li>`;
   }).join('');
 }
@@ -316,20 +350,13 @@ function trendVerdict(slope, vsEma) {
 
 function rsiVerdict(v) {
   if (v == null) return 'Not enough candles yet to calculate RSI.';
-  if (v >= 70) return 'RSI is above 70: recent gains have strongly outweighed losses. Often called overbought, but in a strong trend it can stay here.';
-  if (v <= 30) return 'RSI is below 30: recent losses have strongly outweighed gains. Often called oversold, but in a strong downtrend it can stay here.';
-  if (v >= 55) return 'RSI is above 50: recent gains have outweighed losses.';
-  if (v <= 45) return 'RSI is below 50: recent losses have outweighed gains.';
-  return 'RSI is near 50: gains and losses have been roughly balanced.';
+  return `RSI is ${v.toFixed(1)}: ${rate('rsi', v).text}.`;
 }
 const signed = (v, d = 2) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d));
 
 function volVerdict(rel) {
   if (rel == null) return 'Not enough history yet to compare volatility with its usual level at this time of day.';
-  const tail = 'ATR is ' + rel.toFixed(2) + '× its usual level for this time of day.';
-  if (rel >= 1.3) return 'The stock is moving more than usual: ' + tail;
-  if (rel <= 0.7) return 'The stock is moving less than usual: ' + tail;
-  return 'The stock is moving about as much as usual: ' + tail;
+  return `Volatility rating: ${rate('relAtr', rel).label.toLowerCase().replace(' · ', ', ')}. ATR is ${rel.toFixed(2)}× its usual level for this time of day.`;
 }
 
 function vwapVerdict(dev) {
@@ -339,8 +366,70 @@ function vwapVerdict(dev) {
   return `Price is ${Math.abs(dev).toFixed(2)}% ${side} VWAP, the average price traded today.`;
 }
 
+// Ratings: how good a metric's current value is. Each rule lists bands in order; the first band
+// that fits applies: `upTo` includes its limit, `below` excludes it. Add a metric here to rate it.
+// Grades map to colours: excellent, verygood, good, average, bad; and buy, sell, neutral for direction.
+const RATINGS = {
+  spreadPct: [
+    { upTo: 0.05, grade: 'excellent', label: 'Excellent' }, // 0 to 0.05 %
+    { upTo: 0.1, grade: 'verygood', label: 'Very good' },   // above 0.05 to 0.1 %
+    { upTo: Infinity, grade: 'bad', label: 'Bad' },         // above 0.1 %
+  ],
+  // Lower limits are inclusive here: exactly 1.5 is Good, exactly 2 is Very good, and so on.
+  rvol: [
+    { below: 1, grade: 'bad', label: 'Below normal' },               // 0 to under 1
+    { below: 1.5, grade: 'average', label: 'Slightly above normal' }, // 1 to under 1.5: moderate
+    { below: 2, grade: 'good', label: 'Good' },                       // 1.5 to under 2
+    { below: 3, grade: 'verygood', label: 'Very good' },              // 2 to under 3
+    { below: Infinity, grade: 'excellent', label: 'Excellent' },      // 3 and above
+  ],
+  // For stock selection: 1 to 2 is the usable range; quieter than usual or above 2 is avoided.
+  relAtr: [
+    { below: 0.8, grade: 'bad', label: 'Bad' },                    // under 0.8
+    { below: 1, grade: 'bad', label: 'Normal · avoid' },           // 0.8 to under 1
+    { below: 1.2, grade: 'good', label: 'Normal · good' },         // 1 to under 1.2
+    { below: 1.5, grade: 'verygood', label: 'Very good' },         // 1.2 to under 1.5 (elevated)
+    { below: 2, grade: 'excellent', label: 'Exceptional' },        // 1.5 to under 2 (high)
+    { upTo: 3, grade: 'bad', label: 'Very high · avoid' },         // 2 to 3
+    { upTo: Infinity, grade: 'bad', label: 'Extreme · avoid' },    // above 3
+  ],
+  // Momentum direction and strength. Exactly 30, 40, 50 and 60 go to the band above; exactly 70 is still normal bullish.
+  rsi: [
+    { below: 30, grade: 'sell', label: 'Strong bearish ↓', text: 'strong bearish momentum, downward' },         // under 30
+    { below: 40, grade: 'sell', label: 'Normal bearish ↓', text: 'normal bearish momentum, downward' },         // 30 to under 40
+    { below: 50, grade: 'sell weak', label: 'Weak bearish ↓', text: 'weak bearish momentum, downward' },        // 40 to under 50
+    { below: 60, grade: 'buy weak', label: 'Weak bullish ↑', text: 'weak bullish momentum, upward' },           // 50 to under 60
+    { upTo: 70, grade: 'buy', label: 'Normal bullish ↑', text: 'normal bullish momentum, upward' },             // 60 to 70
+    { upTo: Infinity, grade: 'buy', label: 'Strong bullish ↑', text: 'strong bullish momentum, upward' },       // above 70
+  ],
+  // A direction, not a quality: which side has more visible quantity in the book.
+  imbalance: [
+    { upTo: -1e-9, grade: 'sell', label: 'More visible selling' }, // negative
+    { upTo: 0, grade: 'neutral', label: 'Balanced' },              // exactly zero
+    { upTo: Infinity, grade: 'buy', label: 'More visible buying' }, // positive
+  ],
+};
+function rate(metric, value) {
+  if (value == null || !RATINGS[metric]) return null;
+  return RATINGS[metric].find((band) => (band.below != null ? value < band.below : value <= band.upTo)) ?? null;
+}
+const badge = (rating) => (rating ? `<span class="badge ${rating.grade}">${rating.label}</span>` : '');
+
+// Execution plan for a long trade entered at the last price.
+const STOP_ATR_MULT = 1.5; // stop distance = 1.5 x ATR
+const REWARD_MULT = 2;     // target = entry + 2 x stop distance, i.e. risk:reward 1:2
+let maxRisk = 1000;
+try { const saved = Number(localStorage.getItem('maxRisk')); if (saved > 0) maxRisk = saved; } catch { /* storage unavailable */ }
+function tradePlan(r) {
+  if (r.ltp == null || !r.atr5) return null;
+  const entry = r.ltp;
+  const stopDistance = STOP_ATR_MULT * r.atr5;
+  const qty = Math.floor(maxRisk / stopDistance); // whole shares, rounded down so risk stays within the limit
+  return { entry, stopDistance, stopLoss: entry - stopDistance, target: entry + REWARD_MULT * stopDistance, qty, capital: qty * entry, risk: qty * stopDistance, reward: qty * REWARD_MULT * stopDistance };
+}
+
 // Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
-const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance']];
+const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance'], ['s-exec', 'Execution']];
 const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
 let view = viewFromHash(); // null = tile overview, otherwise the id of the section being shown
 
@@ -351,10 +440,11 @@ function renderDetail() {
   const chg = r.changePct;
   const c = curves && curves.sym === selected ? curves : null;
   const stale = r.asOf && Date.now() - r.asOf > 60000;
+  const plan = tradePlan(r);
   drawCharts = Boolean(view); // the overview shows no charts, so don't build them
   const full = `
     <div class="metric" id="s-volume">
-    <div class="hero"><span class="big num">${fmtRvol(r.rvol)}</span><span class="label">relative volume (RVOL)</span></div>
+    <div class="hero"><span class="big num">${fmtRvol(r.rvol)}</span><span class="label">relative volume (RVOL) ${badge(rate('rvol', r.rvol))}</span></div>
     <p class="verdict">${r.rvol == null ? (r.baselineSessions ? 'RVOL starts once the market opens at 09:15 IST.' : 'No volume history for this stock yet, so RVOL can\'t be calculated.') : verdict(r.rvol)}</p>
     <div class="stats">
       <div class="stat"><div class="k">Volume ${stale ? 'for the day' : 'so far today'}</div><div class="v num">${fmt(compact, r.volume)}</div></div>
@@ -365,7 +455,7 @@ function renderDetail() {
     <div class="chart-head"><h3>Cumulative volume through the session</h3>
       <div class="legend"><span>${stale && r.asOf ? dayText(r.asOf) : 'Today'}</span><span class="avg">Average</span></div></div>
     ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
-    <p class="note">RVOL = volume so far ÷ average volume by the same time of day. Above 1 means busier than usual.</p>
+    <p class="note">RVOL = volume so far ÷ average volume by the same time of day. Above 1 means busier than usual. Ratings: under 1 below normal · 1–1.5 slightly above normal · 1.5–2 good · 2–3 very good · 3 and above excellent.</p>
     </div>
 
     <div class="metric" id="s-vwap">
@@ -385,26 +475,26 @@ function renderDetail() {
     </div>
 
     <div class="metric" id="s-volatility">
-      <div class="hero"><span class="big num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</span><span class="label">relative ATR (volatility vs usual at this time of day)</span></div>
+      <div class="hero"><span class="big num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</span><span class="label">relative ATR (volatility vs usual at this time of day) ${badge(rate('relAtr', r.relAtr))}</span></div>
       <p class="verdict">${volVerdict(r.relAtr)}</p>
       <div class="stats">
         <div class="stat"><div class="k">True range (last 5-min candle)</div><div class="v num">${r.tr5 == null ? '–' : '₹' + price.format(r.tr5)}</div></div>
         <div class="stat"><div class="k">ATR (14, 5-min)</div><div class="v num">${r.atr5 == null ? '–' : '₹' + price.format(r.atr5)}</div></div>
         <div class="stat"><div class="k">ATR %</div><div class="v num">${r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%'}</div></div>
         <div class="stat"><div class="k">Usual ATR at this time</div><div class="v num">${r.atrUsual == null ? '–' : '₹' + price.format(r.atrUsual)}</div><div class="k num">${r.relAtrSessions ? 'average of last ' + r.relAtrSessions + ' sessions' : ''}</div></div>
-        <div class="stat"><div class="k">Relative ATR</div><div class="v num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</div></div>
+        <div class="stat"><div class="k">Relative ATR</div><div class="v num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</div><div class="k">+ve value · 1× = usual</div></div>
       </div>
       <div class="chart-head"><h3>True range and ATR through the session (5-minute candles)</h3>
         <div class="legend"><span>True range</span><span class="vw">ATR</span><span class="avg">Usual ATR</span></div></div>
       ${c ? chartSvg([{ data: c.trCurve, cls: 'l-today' }, { data: c.atrUsualCurve, cls: 'l-avg' }, { data: c.atrCurve, cls: 'l-vwap' }], { fromZero: true, format: (v) => price.format(v), label: 'True range of each 5-minute candle against ATR' }) : '<p class="empty">Loading chart…</p>'}
-      <p class="note">True range is the largest of a candle's high − low and its gaps from the previous close. ATR is its 14-candle average. ATR % = ATR ÷ price, which makes stocks comparable. Relative ATR = ATR ÷ the average ATR at the same time of day over the last 20 sessions; 1× is normal for this time of day. These use completed 5-minute candles and refresh every 5 minutes.</p>
+      <p class="note">True range is the largest of a candle's high − low and its gaps from the previous close. ATR is its 14-candle average. ATR % = ATR ÷ price, which makes stocks comparable. Relative ATR = ATR ÷ the average ATR at the same time of day over the last 20 sessions; 1× is normal for this time of day. It is a ratio of two ATRs, so it is always positive and says nothing about direction: above 1 means more movement than usual, below 1 means less. Ratings: under 0.8 bad · 0.8–1 normal, avoid · 1–1.2 normal, good · 1.2–1.5 very good · 1.5–2 exceptional · 2–3 very high, avoid · above 3 extreme, avoid. These use completed 5-minute candles and refresh every 5 minutes.</p>
     </div>
 
     <div class="metric" id="s-momentum">
-      <div class="hero"><span class="big num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</span><span class="label">RSI (14, 5-min)</span></div>
+      <div class="hero"><span class="big num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</span><span class="label">RSI (14, 5-min) ${badge(rate('rsi', r.rsi))}</span></div>
       <p class="verdict">${rsiVerdict(r.rsi)}</p>
       <div class="stats">
-        <div class="stat"><div class="k">RSI (14)</div><div class="v num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</div></div>
+        <div class="stat"><div class="k">RSI (14)</div><div class="v num">${r.rsi == null ? '–' : r.rsi.toFixed(1)}</div><div class="k">value from 0 to 100</div></div>
         <div class="stat"><div class="k">Rate of change (10 candles)</div><div class="v num ${r.roc == null ? '' : r.roc >= 0 ? 'up' : 'down'}">${signed(r.roc)}${r.roc == null ? '' : '%'}</div></div>
         <div class="stat"><div class="k">ROC compares price with</div><div class="v num">50 minutes ago</div></div>
       </div>
@@ -412,7 +502,7 @@ function renderDetail() {
       ${c ? chartSvg([{ data: c.rsiCurve, cls: 'l-today' }], { range: [0, 100], guides: [30, 70], format: (v) => v.toFixed(0), label: 'RSI through the session with 30 and 70 marked' }) : '<p class="empty">Loading chart…</p>'}
       <div class="chart-head" style="margin-top:18px"><h3>Rate of change through the session</h3><div class="legend"><span>ROC %</span></div></div>
       ${c ? chartSvg([{ data: c.rocCurve, cls: 'l-today' }], { guides: [0], format: (v) => v.toFixed(2), label: 'Rate of change through the session with zero marked' }) : '<p class="empty">Loading chart…</p>'}
-      <p class="note">Rate of change = how far price has moved, in percent, over the last 10 five-minute candles. Positive means momentum is up. RSI (0 to 100) compares the size of recent gains with recent losses over 14 candles. Both headline values include the candle now forming, using the last price; the charts show completed candles.</p>
+      <p class="note">Rate of change = how far price has moved, in percent, over the last 10 five-minute candles. Positive means momentum is up. RSI (0 to 100) compares the size of recent gains with recent losses over 14 candles. RSI ratings: under 30 strong bearish · 30–40 normal bearish · 40–50 weak bearish · 50–60 weak bullish · 60–70 normal bullish · above 70 strong bullish. Both headline values include the candle now forming, using the last price; the charts show completed candles.</p>
     </div>
 
     <div class="metric" id="s-trend">
@@ -436,10 +526,10 @@ function renderDetail() {
       ${r.imbalance5 == null ? '' : `<div class="split" role="img" aria-label="Share of quantity on the buy and sell side"><div class="b" style="width:${(((1 + r.imbalance5) / 2) * 100).toFixed(1)}%"></div><div class="a" style="flex:1"></div></div>
       <div class="split-labels"><span>Buy ${qty.format(r.bidQty5)}</span><span>Sell ${qty.format(r.askQty5)}</span></div>`}
       <div class="stats">
-        <div class="stat"><div class="k">Spread %</div><div class="v num">${r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%'}</div></div>
+        <div class="stat"><div class="k">Spread %</div><div class="v num">${r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%'} ${badge(rate('spreadPct', r.spreadPct))}</div><div class="k">0–0.05% excellent · 0.05–0.1% very good · above 0.1% bad</div></div>
         <div class="stat"><div class="k">Spread (₹)</div><div class="v num">${r.spread == null ? '–' : '₹' + price.format(r.spread)}</div></div>
-        <div class="stat"><div class="k">Imbalance, top 5 levels</div><div class="v num ${r.imbalance5 == null ? '' : r.imbalance5 >= 0 ? 'up' : 'down'}">${signed(r.imbalance5)}</div></div>
-        <div class="stat"><div class="k">Imbalance, whole book</div><div class="v num ${r.imbalanceBook == null ? '' : r.imbalanceBook >= 0 ? 'up' : 'down'}">${signed(r.imbalanceBook)}</div></div>
+        <div class="stat"><div class="k">Imbalance, top 5 levels</div><div class="v num ${r.imbalance5 == null ? '' : r.imbalance5 >= 0 ? 'up' : 'down'}">${signed(r.imbalance5)} ${r.bookLive ? badge(rate('imbalance', r.imbalance5)) : ''}</div></div>
+        <div class="stat"><div class="k">Imbalance, whole book</div><div class="v num ${r.imbalanceBook == null ? '' : r.imbalanceBook >= 0 ? 'up' : 'down'}">${signed(r.imbalanceBook)} ${r.bookLive ? badge(rate('imbalance', r.imbalanceBook)) : ''}</div></div>
       </div>
       <div class="chart-head"><h3>Order book depth (best 5 levels each side)</h3></div>
       ${bookTable(r.book)}
@@ -474,6 +564,23 @@ function renderDetail() {
       <div class="chart-head" style="margin-top:18px"><h3>Recent swings (newest first)</h3></div>
       ${swingTable(r)}
       <p class="note">A swing high is a 5-minute candle whose high is the highest of 5 candles: itself and the 2 on each side. A swing low is the same with lows. The last swing high acts as resistance and the last swing low as support. A swing is only confirmed 2 candles later, so the newest one is at least 10 minutes old. These refresh every 5 minutes; the distances update live.</p>
+    </div>
+
+    <div class="metric" id="s-exec">
+      <div class="hero"><span class="big num">${plan ? qty.format(plan.qty) : '–'}</span><span class="label">shares to buy (position size) for a max risk of ₹${qty.format(maxRisk)}</span></div>
+      <p class="verdict">${plan ? `Buying at ₹${price.format(plan.entry)} with a stop at ₹${price.format(plan.stopLoss)} and a target at ₹${price.format(plan.target)}. If the stop is hit you lose about ₹${qty.format(Math.round(plan.risk))}; at the target you make about ₹${qty.format(Math.round(plan.reward))}.` : 'Needs a last price and an ATR to plan a trade.'}</p>
+      ${plan ? `<div class="ladder">
+        <div class="t"><span>Target price <span class="sub">entry + 2 × stop distance</span></span><b>₹${price.format(plan.target)}</b></div>
+        <div class="e"><span>Entry price <span class="sub">last price</span></span><b>₹${price.format(plan.entry)}</b></div>
+        <div class="s"><span>Stop loss <span class="sub">entry − stop distance</span></span><b>₹${price.format(plan.stopLoss)}</b></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><div class="k">Stop distance</div><div class="v num">₹${price.format(plan.stopDistance)}</div><div class="k num">1.5 × ATR of ₹${price.format(r.atr5)}</div></div>
+        <div class="stat"><div class="k">Position size</div><div class="v num">${qty.format(plan.qty)} shares</div><div class="k num">₹${qty.format(maxRisk)} ÷ ₹${price.format(plan.stopDistance)}</div></div>
+        <div class="stat"><div class="k">Capital needed</div><div class="v num">₹${qty.format(Math.round(plan.capital))}</div><div class="k num">shares × entry price</div></div>
+        <div class="stat"><div class="k">Risk : reward</div><div class="v num">1 : 2</div><div class="k num">₹${qty.format(Math.round(plan.risk))} : ₹${qty.format(Math.round(plan.reward))}</div></div>
+      </div>` : ''}
+      <p class="note">For a long (buy) trade entered at the last price. Stop distance = 1.5 × ATR(14) on 5-minute candles. Stop loss = entry − stop distance. Position size = max risk ÷ stop distance, rounded down to whole shares. Target = entry + 2 × stop distance, which gives risk : reward of 1 : 2. Set the max risk in the box at the top of the page. These numbers move with the price and ATR, and ignore brokerage, taxes and slippage; a real fill at the stop can be worse than the stop price.</p>
     </div>`;
   const tpl = document.createElement('template');
   tpl.innerHTML = full;
@@ -495,31 +602,36 @@ function renderDetail() {
   const level = (lv) => (lv ? { value: rupee(lv.price), sub: (lv.name ? lv.name + ' · ' : '') + signed(lv.distancePct) + '% away' + (lv.broken ? ' · broken' : '') } : { value: '–', sub: '' });
   const pivS = level(r.support), pivR = level(r.resistance), swS = level(r.swingLow), swR = level(r.swingHigh);
   const TILES = [
-    ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'volume vs usual for this time', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`],
+    ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'volume vs usual for this time', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`, rate('rvol', r.rvol)],
     ['s-vwap', 'VWAP', rupee(r.vwap), '', 'average price traded today', `VWAP = Σ(price × volume) ÷ Σ(volume) for today's trades (taken from the exchange feed)`],
     ['s-vwap', 'VWAP deviation', pct(r.vwapDevPct), tone(r.vwapDevPct), r.vwap == null ? '' : signed(r.ltp - r.vwap) + ' ₹ from VWAP', `VWAP deviation % = (last price − VWAP) ÷ VWAP × 100`],
     ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'distance from VWAP in ATRs', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`],
     ['s-volatility', 'True range', rupee(r.tr5), '', 'last 5-min candle', `True range = max(high − low, |high − previous close|, |low − previous close|) of the last completed 5-minute candle`],
     ['s-volatility', 'ATR', rupee(r.atr5), '', '14 candles, 5-min', `ATR = Wilder average of true range over 14 five-minute candles: ATR = (previous ATR × 13 + true range) ÷ 14`],
     ['s-volatility', 'ATR %', r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%', '', 'ATR as a share of price', `ATR % = ATR ÷ last price × 100`],
-    ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', 'vs usual for this time of day', `Relative ATR = current ATR ÷ average ATR at the same time of day over the last 20 sessions`],
-    ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', '14 candles, 5-min', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`],
+    ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', '+ve value · 1× = usual for this time', `Relative ATR = current ATR ÷ average ATR at the same time of day over the last 20 sessions`, rate('relAtr', r.relAtr)],
+    ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', 'value from 0 to 100 · 14 candles, 5-min', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`, rate('rsi', r.rsi)],
     ['s-momentum', 'Rate of change', pct(r.roc), tone(r.roc), 'over 10 candles (50 min)', `ROC % = (close now − close 10 candles ago) ÷ close 10 candles ago × 100`],
     ['s-trend', 'EMA 20', rupee(r.ema), '', r.priceVsEmaPct == null ? '' : 'price ' + signed(r.priceVsEmaPct) + '% vs EMA', `EMA = close × k + previous EMA × (1 − k), with k = 2 ÷ (20 + 1), on 5-minute closes`],
     ['s-trend', 'EMA slope %', pct(r.emaSlopePct, 3), tone(r.emaSlopePct), 'change in EMA over 5 candles', `EMA slope % = (EMA now − EMA 5 candles ago) ÷ EMA 5 candles ago × 100`],
-    ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : '') : '₹' + price.format(r.spread) + ' bid to ask', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`],
-    ['s-book', 'Order book imbalance', signed(r.imbalance5), tone(r.imbalance5), r.book && !r.bookLive ? 'market closed · leftover book' : 'top 5 levels, −1 to +1', `Imbalance = (bid quantity − ask quantity) ÷ (bid quantity + ask quantity), over the top 5 levels`],
+    ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : '') : '₹' + price.format(r.spread) + ' bid to ask', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`, rate('spreadPct', r.spreadPct)],
+    ['s-book', 'Order book imbalance', signed(r.imbalance5), tone(r.imbalance5), r.book && !r.bookLive ? 'market closed · leftover book' : 'top 5 levels, −1 to +1', `Imbalance = (bid quantity − ask quantity) ÷ (bid quantity + ask quantity), over the top 5 levels`, r.bookLive ? rate('imbalance', r.imbalance5) : null],
     ['s-levels', 'Nearest support (pivot)', pivS.value, '', pivS.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. S1 = 2 × pivot − high, S2 = pivot − (high − low), S3 = low − 2 × (high − pivot). Shown: the closest level at or below the price`],
     ['s-levels', 'Nearest resistance (pivot)', pivR.value, '', pivR.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. R1 = 2 × pivot − low, R2 = pivot + (high − low), R3 = high + 2 × (pivot − low). Shown: the closest level above the price`],
     ['s-swings', 'Nearest support (swing)', swS.value, '', swS.sub, `Last swing low = low of the most recent 5-minute candle whose low is the lowest of 5 candles (itself and 2 on each side)`],
     ['s-swings', 'Nearest resistance (swing)', swR.value, '', swR.sub, `Last swing high = high of the most recent 5-minute candle whose high is the highest of 5 candles (itself and 2 on each side)`],
+    ['s-exec', 'Stop distance', plan ? rupee(plan.stopDistance) : '–', '', '1.5 × ATR', `Stop distance = 1.5 × ATR(14) on 5-minute candles`],
+    ['s-exec', 'Stop loss', plan ? rupee(plan.stopLoss) : '–', '', plan ? 'for entry at ' + rupee(plan.entry) : '', `Stop loss = entry price − stop distance`],
+    ['s-exec', 'Position size', plan ? qty.format(plan.qty) + ' shares' : '–', '', plan ? 'needs ₹' + qty.format(Math.round(plan.capital)) + ' · risk ₹' + qty.format(maxRisk) : '', `Position size = maximum risk ÷ stop distance`],
+    ['s-exec', 'Target price', plan ? rupee(plan.target) : '–', '', 'risk : reward 1 : 2', `Target price = entry price + 2 × stop distance`],
   ];
   tileInfo = TILES.map(([, title, , , , formula]) => ({ title, formula }));
   // One group per section: a heading, then that section's tiles on their own row(s).
-  const tile = ([id, title, value, cls, sub], n) => `<a class="tile" href="#${id}">
+  const tile = ([id, title, value, cls, sub, , rating], n) => `<a class="tile ${rating ? 'rated ' + rating.grade : ''}" href="#${id}">
       <div class="tile-title">${title}<span class="info" data-n="${n}" role="button" aria-label="Show the formula for ${title}">i</span></div>
       <div class="tile-value ${cls}">${value}</div>
       <div class="tile-label">${sub || '&nbsp;'}</div>
+      ${rating ? `<div class="tile-rating">${badge(rating)}</div>` : ''}
     </a>`;
   const groups = SECTIONS.map(([id, name]) => `<section class="group">
       <h3 class="group-title"><a href="#${id}">${name}<span aria-hidden="true"> →</span></a></h3>
@@ -562,6 +674,16 @@ function applyRow(r) {
     }
   }
 }
+
+// Max risk per trade: lives in the header (outside the redrawn panel) and is remembered.
+$('max-risk').value = maxRisk;
+$('max-risk').addEventListener('input', (e) => {
+  const v = Number(e.target.value);
+  if (!(v > 0)) return; // ignore empty or invalid input while typing
+  maxRisk = v;
+  try { localStorage.setItem('maxRisk', String(v)); } catch { /* storage unavailable */ }
+  schedule();
+});
 
 // Stock list open/closed, remembered across refreshes.
 function setSidebar(open) {
