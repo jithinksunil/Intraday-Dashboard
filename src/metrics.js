@@ -78,7 +78,7 @@ function trendMetrics(s) {
     price,
     atr: last(a),
     atrPct: (last(a) / price) * 100,
-    relAtr: ind.relativeAtr(a, 100),
+    relAtr: ind.relativeAtrByTime(s.tf, a, 20)?.ratio ?? null,
     ema20: last(e20),
     emaSlopePct: last(ind.pctChange(e20, 5)),
     roc10: last(ind.roc(closes, 10)),

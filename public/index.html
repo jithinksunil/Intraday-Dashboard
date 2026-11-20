@@ -8,12 +8,12 @@
   :root {
     color-scheme: light dark;
     --bg: #f6f7f9; --panel: #ffffff; --line: #e3e6eb; --text: #15181d; --muted: #68707d;
-    --accent: #2f6fed; --up: #10895a; --down: #c8372d; --hot: #b45309; --hover: #f0f3f8; --avg: #9aa3b2;
+    --accent: #2f6fed; --up: #10895a; --down: #c8372d; --hot: #b45309; --hover: #f0f3f8; --avg: #9aa3b2; --tip-bg: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0f1216; --panel: #171b21; --line: #272d36; --text: #e8ebf0; --muted: #8b95a5;
-      --accent: #6b9bff; --up: #3ecf8e; --down: #ff7a6e; --hot: #f5a524; --hover: #1e242c; --avg: #6a7484;
+      --accent: #6b9bff; --up: #3ecf8e; --down: #ff7a6e; --hot: #f5a524; --hover: #1e242c; --avg: #6a7484; --tip-bg: #1f252e;
     }
   }
   * { box-sizing: border-box; }
@@ -93,19 +93,33 @@
   table.levels th:first-child, table.levels td:first-child { text-align: left; }
   table.levels td { padding: 6px 8px; text-align: right; border-top: 1px solid var(--line); }
   table.levels tr.now td { background: var(--hover); font-weight: 600; }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .group { margin-top: 22px; }
+  .group-title { margin: 0 0 10px; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .group-title a { color: var(--muted); text-decoration: none; }
+  .group-title a:hover, .group-title a:focus-visible { color: var(--accent); outline: none; }
   .tile { display: block; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; color: inherit; text-decoration: none; transition: border-color .12s, background .12s; }
   .tile:hover { background: var(--hover); border-color: var(--accent); }
   .tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .tile-title { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 600; }
   .tile-value { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin-top: 10px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .tile { position: relative; }
-  .info { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: none; border: 1px solid var(--muted); border-radius: 50%; font-size: 11px; font-weight: 700; font-style: italic; font-family: Georgia, serif; cursor: help; }
-  .info:hover { color: var(--text); border-color: var(--accent); }
-  .tip { display: none; position: absolute; left: -1px; right: -1px; top: calc(100% + 6px); z-index: 5; padding: 10px 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--panel); color: var(--text); font-size: 12.5px; line-height: 1.5; box-shadow: 0 6px 20px rgba(0, 0, 0, .25); }
-  .tile:has(.info:hover) .tip, .tile:focus-visible .tip { display: block; }
-  .tile-group { margin-top: 12px; color: var(--muted); font-size: 11px; }
-  .tile-group::before { content: "in "; }
+  .info { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: none; border: 1px solid var(--muted); border-radius: 50%; font-size: 11px; font-weight: 700; font-style: italic; font-family: Georgia, serif; }
+  .info { transition: color .12s, border-color .12s, background .12s; }
+  .info:hover, .info.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  #tooltip { position: fixed; z-index: 20; width: max-content; max-width: min(360px, calc(100vw - 24px)); padding: 12px 14px 13px; border: 1px solid var(--line); border-top: 2px solid var(--accent); border-radius: 10px; background: var(--tip-bg); color: var(--text); box-shadow: 0 12px 32px rgba(0, 0, 0, .35), 0 2px 6px rgba(0, 0, 0, .2); pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; visibility: hidden; }
+  #tooltip.show { opacity: 1; transform: none; visibility: visible; }
+  #tooltip::before { content: ""; position: absolute; left: var(--arrow-x, 20px); width: 10px; height: 10px; background: var(--tip-bg); border-left: 1px solid var(--line); border-top: 2px solid var(--accent); transform: translateX(-50%) rotate(45deg); top: -7px; }
+  #tooltip.above::before { top: auto; bottom: -6px; border: 0; border-right: 1px solid var(--accent); border-bottom: 1px solid var(--accent); }
+  #tooltip.above { border-top: 1px solid var(--line); border-bottom: 2px solid var(--accent); transform: translateY(-4px); }
+  #tooltip.above.show { transform: none; }
+  #tooltip .tt-kicker { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  #tooltip .tt-title { font-size: 14px; font-weight: 650; margin: 2px 0 9px; }
+  #tooltip .tt-eq { font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; }
+  #tooltip .tt-eq + .tt-eq { margin-top: 6px; }
+  #tooltip .tt-eq b { color: var(--accent); font-weight: 600; }
+  #tooltip .tt-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  @media (prefers-reduced-motion: reduce) { #tooltip { transition: none; transform: none; } }
   .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .tile-verdict { margin: 10px 0 0; font-size: 13px; }
   .back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
@@ -128,6 +142,7 @@
   <nav class="panel" id="stocks" aria-label="Stocks"><ul id="list"></ul></nav>
   <section class="panel" id="detail" aria-live="polite"><p class="empty">Waiting for data…</p></section>
 </main>
+<div id="tooltip" role="tooltip"></div>
 <script>
 const rows = new Map();          // sym -> latest row
 let order = [];                  // symbols in config order
@@ -310,10 +325,11 @@ function rsiVerdict(v) {
 const signed = (v, d = 2) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d));
 
 function volVerdict(rel) {
-  if (rel == null) return 'Not enough candles yet to compare volatility with its usual level.';
-  if (rel >= 1.3) return 'The stock is moving more than usual: ATR is ' + rel.toFixed(2) + '× its recent average.';
-  if (rel <= 0.7) return 'The stock is moving less than usual: ATR is ' + rel.toFixed(2) + '× its recent average.';
-  return 'The stock is moving about as much as usual: ATR is ' + rel.toFixed(2) + '× its recent average.';
+  if (rel == null) return 'Not enough history yet to compare volatility with its usual level at this time of day.';
+  const tail = 'ATR is ' + rel.toFixed(2) + '× its usual level for this time of day.';
+  if (rel >= 1.3) return 'The stock is moving more than usual: ' + tail;
+  if (rel <= 0.7) return 'The stock is moving less than usual: ' + tail;
+  return 'The stock is moving about as much as usual: ' + tail;
 }
 
 function vwapVerdict(dev) {
@@ -324,7 +340,7 @@ function vwapVerdict(dev) {
 }
 
 // Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
-const SECTIONS = [['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-trend', 'Trend'], ['s-book', 'Order book'], ['s-levels', 'Pivot levels'], ['s-swings', 'Swing levels']];
+const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-trend', 'Trend'], ['s-levels', 'Pivot levels'], ['s-swings', 'Swing levels']];
 const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
 let view = viewFromHash(); // null = tile overview, otherwise the id of the section being shown
 
@@ -369,18 +385,19 @@ function renderDetail() {
     </div>
 
     <div class="metric" id="s-volatility">
-      <div class="hero"><span class="big num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</span><span class="label">relative ATR (volatility vs usual)</span></div>
+      <div class="hero"><span class="big num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</span><span class="label">relative ATR (volatility vs usual at this time of day)</span></div>
       <p class="verdict">${volVerdict(r.relAtr)}</p>
       <div class="stats">
         <div class="stat"><div class="k">True range (last 5-min candle)</div><div class="v num">${r.tr5 == null ? '–' : '₹' + price.format(r.tr5)}</div></div>
         <div class="stat"><div class="k">ATR (14, 5-min)</div><div class="v num">${r.atr5 == null ? '–' : '₹' + price.format(r.atr5)}</div></div>
         <div class="stat"><div class="k">ATR %</div><div class="v num">${r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%'}</div></div>
+        <div class="stat"><div class="k">Usual ATR at this time</div><div class="v num">${r.atrUsual == null ? '–' : '₹' + price.format(r.atrUsual)}</div><div class="k num">${r.relAtrSessions ? 'average of last ' + r.relAtrSessions + ' sessions' : ''}</div></div>
         <div class="stat"><div class="k">Relative ATR</div><div class="v num">${r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×'}</div></div>
       </div>
       <div class="chart-head"><h3>True range and ATR through the session (5-minute candles)</h3>
-        <div class="legend"><span>True range</span><span class="vw">ATR</span></div></div>
-      ${c ? chartSvg([{ data: c.trCurve, cls: 'l-today' }, { data: c.atrCurve, cls: 'l-vwap' }], { fromZero: true, format: (v) => price.format(v), label: 'True range of each 5-minute candle against ATR' }) : '<p class="empty">Loading chart…</p>'}
-      <p class="note">True range is the largest of a candle's high − low and its gaps from the previous close. ATR is its 14-candle average. ATR % = ATR ÷ price, which makes stocks comparable. Relative ATR = ATR ÷ its own average over the previous 100 candles; 1× is normal. These use completed 5-minute candles and refresh every 5 minutes.</p>
+        <div class="legend"><span>True range</span><span class="vw">ATR</span><span class="avg">Usual ATR</span></div></div>
+      ${c ? chartSvg([{ data: c.trCurve, cls: 'l-today' }, { data: c.atrUsualCurve, cls: 'l-avg' }, { data: c.atrCurve, cls: 'l-vwap' }], { fromZero: true, format: (v) => price.format(v), label: 'True range of each 5-minute candle against ATR' }) : '<p class="empty">Loading chart…</p>'}
+      <p class="note">True range is the largest of a candle's high − low and its gaps from the previous close. ATR is its 14-candle average. ATR % = ATR ÷ price, which makes stocks comparable. Relative ATR = ATR ÷ the average ATR at the same time of day over the last 20 sessions; 1× is normal for this time of day. These use completed 5-minute candles and refresh every 5 minutes.</p>
     </div>
 
     <div class="metric" id="s-momentum">
@@ -485,7 +502,7 @@ function renderDetail() {
     ['s-volatility', 'True range', rupee(r.tr5), '', 'last 5-min candle', `True range = max(high − low, |high − previous close|, |low − previous close|) of the last completed 5-minute candle`],
     ['s-volatility', 'ATR', rupee(r.atr5), '', '14 candles, 5-min', `ATR = Wilder average of true range over 14 five-minute candles: ATR = (previous ATR × 13 + true range) ÷ 14`],
     ['s-volatility', 'ATR %', r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%', '', 'ATR as a share of price', `ATR % = ATR ÷ last price × 100`],
-    ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', 'volatility vs its usual level', `Relative ATR = current ATR ÷ average ATR over the previous 100 five-minute candles`],
+    ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', 'vs usual for this time of day', `Relative ATR = current ATR ÷ average ATR at the same time of day over the last 20 sessions`],
     ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', '14 candles, 5-min', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`],
     ['s-momentum', 'Rate of change', pct(r.roc), tone(r.roc), 'over 10 candles (50 min)', `ROC % = (close now − close 10 candles ago) ÷ close 10 candles ago × 100`],
     ['s-trend', 'EMA 20', rupee(r.ema), '', r.priceVsEmaPct == null ? '' : 'price ' + signed(r.priceVsEmaPct) + '% vs EMA', `EMA = close × k + previous EMA × (1 − k), with k = 2 ÷ (20 + 1), on 5-minute closes`],
@@ -497,15 +514,19 @@ function renderDetail() {
     ['s-swings', 'Nearest support (swing)', swS.value, '', swS.sub, `Last swing low = low of the most recent 5-minute candle whose low is the lowest of 5 candles (itself and 2 on each side)`],
     ['s-swings', 'Nearest resistance (swing)', swR.value, '', swR.sub, `Last swing high = high of the most recent 5-minute candle whose high is the highest of 5 candles (itself and 2 on each side)`],
   ];
-  const sectionName = Object.fromEntries(SECTIONS);
-  const tiles = TILES.map(([id, title, value, cls, sub, formula], n) => `<a class="tile" href="#${id}" aria-describedby="tip-${n}">
-      <div class="tile-title">${title}<span class="info" aria-hidden="true">i</span></div>
-      <div class="tip" role="tooltip" id="tip-${n}">${formula}</div>
+  tileInfo = TILES.map(([, title, , , , formula]) => ({ title, formula }));
+  // One group per section: a heading, then that section's tiles on their own row(s).
+  const tile = ([id, title, value, cls, sub], n) => `<a class="tile" href="#${id}">
+      <div class="tile-title">${title}<span class="info" data-n="${n}" role="button" aria-label="Show the formula for ${title}">i</span></div>
       <div class="tile-value ${cls}">${value}</div>
       <div class="tile-label">${sub || '&nbsp;'}</div>
-      <div class="tile-group">${sectionName[id]}</div>
-    </a>`).join('');
-  el.innerHTML = `${header}<div class="tiles">${tiles}</div>`;
+    </a>`;
+  const groups = SECTIONS.map(([id, name]) => `<section class="group">
+      <h3 class="group-title"><a href="#${id}">${name}<span aria-hidden="true"> →</span></a></h3>
+      <div class="tiles">${TILES.map((t, n) => (t[0] === id ? tile(t, n) : '')).join('')}</div>
+    </section>`).join('');
+  el.innerHTML = `${header}${groups}`;
+  if (tipFor != null) el.querySelector(`.info[data-n="${tipFor}"]`)?.classList.add('on');
 }
 
 async function loadCurves(sym) {
@@ -513,7 +534,7 @@ async function loadCurves(sym) {
     const res = await fetch('/api/detail?sym=' + encodeURIComponent(sym));
     if (!res.ok) return;
     const d = await res.json();
-    if (sym === selected) { curves = { sym, average: d.average, today: d.today, price: d.price, vwapCurve: d.vwapCurve, trCurve: d.trCurve, atrCurve: d.atrCurve, rocCurve: d.rocCurve, rsiCurve: d.rsiCurve, emaCurve: d.emaCurve, slopeCurve: d.slopeCurve }; renderDetail(); }
+    if (sym === selected) { curves = { sym, average: d.average, today: d.today, price: d.price, vwapCurve: d.vwapCurve, trCurve: d.trCurve, atrCurve: d.atrCurve, atrUsualCurve: d.atrUsualCurve, rocCurve: d.rocCurve, rsiCurve: d.rsiCurve, emaCurve: d.emaCurve, slopeCurve: d.slopeCurve }; renderDetail(); }
   } catch { /* server down; the socket status already says so */ }
 }
 
@@ -558,11 +579,70 @@ $('list').addEventListener('click', (e) => {
   if (b) select(b.dataset.sym);
 });
 
-// The info icon sits inside the tile link; a click on it shows the formula (via :hover) without navigating.
-$('detail').addEventListener('click', (e) => { if (e.target.closest('.info')) e.preventDefault(); });
+// One tooltip for all info icons. It lives outside the tiles, which are redrawn on every quote,
+// so it stays put while the numbers behind it change.
+let tileInfo = [];
+let tipFor = null;
+function formulaHtml(text) {
+  // "A = B. C = D. Shown: note" -> one equation box per equation, then the note.
+  const parts = text.split(/\.\s+(?=[A-Z])/);
+  let html = '';
+  for (const part of parts) {
+    // "R1 = …, R2 = …" -> one box each. Other commas (such as "…, with k = …") stay in one box.
+    const pieces = part.split(/,\s(?=[A-Z]\d?\s=)/);
+    if (pieces.length > 1) { html += pieces.map((x) => formulaHtml(x)).join(''); continue; }
+    const eq = part.match(/^(.+?)\s=\s(.+)$/);
+    if (eq) html += `<div class="tt-eq"><b>${eq[1]}</b> = ${eq[2].replace(/\.$/, '')}</div>`;
+    else html += `<div class="tt-note">${part.replace(/^Shown:\s*/, '')}</div>`;
+  }
+  return html;
+}
+function showTip(icon) {
+  const n = Number(icon.dataset.n);
+  const info = tileInfo[n];
+  const tip = $('tooltip');
+  if (!info) return;
+  if (tipFor !== n) {
+    tip.innerHTML = `<div class="tt-kicker">How it's calculated</div><div class="tt-title">${info.title}</div>${formulaHtml(info.formula)}`;
+    tipFor = n;
+  }
+  // Above the icon, right-aligned to it; dropped below only when there is no room above.
+  const a = icon.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight, gap = 10;
+  const left = Math.max(12, Math.min(a.right + 14 - w, window.innerWidth - w - 12));
+  const above = a.top - gap - h > 8 || a.bottom + gap + h > window.innerHeight - 8;
+  tip.style.left = left + 'px';
+  tip.style.top = (above ? a.top - gap - h : a.bottom + gap) + 'px';
+  tip.style.setProperty('--arrow-x', (a.left + a.width / 2 - left) + 'px');
+  tip.classList.toggle('above', above);
+  tip.classList.add('show');
+}
+function hideTip() {
+  if (tipFor == null) return;
+  tipFor = null;
+  $('tooltip').classList.remove('show');
+  document.querySelector('.info.on')?.classList.remove('on');
+}
+// Click the icon to open its tooltip; click it again, click anywhere else, or press Escape to close.
+document.addEventListener('click', (e) => {
+  const icon = e.target.closest?.('.info');
+  if (!icon) { hideTip(); return; }
+  e.preventDefault(); // the icon sits inside the tile link: don't navigate
+  if (tipFor === Number(icon.dataset.n)) hideTip(); else showTip(icon);
+  schedule();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+window.addEventListener('scroll', hideTip, { passive: true });
+window.addEventListener('resize', hideTip);
+
+// Redraws replace the elements under the pointer; one landing between press and release would
+// swallow the click. So drawing waits while a mouse button or finger is down.
+let pointerDown = false;
+window.addEventListener('pointerdown', () => { pointerDown = true; });
+for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => { pointerDown = false; schedule(); });
 
 // Tiles and the back link are plain #links, so the browser's back button works between views.
-window.addEventListener('hashchange', () => { view = viewFromHash(); window.scrollTo(0, 0); schedule(); });
+window.addEventListener('hashchange', () => { hideTip(); view = viewFromHash(); window.scrollTo(0, 0); schedule(); });
 
 var dirty = false; // var: schedule() can be called before this line runs (restoring a closed sidebar)
 function schedule() {
@@ -570,6 +650,7 @@ function schedule() {
   dirty = true;
   requestAnimationFrame(() => {
     dirty = false;
+    if (pointerDown) return; // redrawn on release
     renderStatus();
     renderList();
     try {

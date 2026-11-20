@@ -1,6 +1,6 @@
 // Holds the live state behind the dashboard: latest quote per symbol, the RVOL baseline, and
 // today's per-minute curves (cumulative volume, price, VWAP). Fed with normalized quote records; no I/O of its own.
-import { atr, ema, istDay, last, pctChange, pivots, relativeAtr, resample, roc, rsi, swings, toDaily, trueRanges } from './indicators.js';
+import { atr, ema, istDay, last, pctChange, pivots, relativeAtrByTime, resample, roc, rsi, swings, toDaily, trueRanges } from './indicators.js';
 import { buildBaseline, minuteIndex, rvolAt, SESSION_MINUTES, todayCurve } from './rvol.js';
 import { inMarketHours } from './time.js';
 import { sessionPriceCurves, vwapDeviationPct } from './vwapCurve.js';
@@ -36,15 +36,24 @@ export class RvolEngine {
     s.today = stored.map((v, i) => v ?? s.today?.[i] ?? null);
     // Previous session's high, low and close, for pivot points.
     s.prevDay = toDaily(m1.slice(-3000)).filter((k) => istDay(k.t) < s.day).at(-1) ?? null;
-    // Volatility on completed 5-minute candles: true range, ATR(14), and ATR relative to its
-    // own average over the previous 100 candles. A still-forming last candle is left out.
-    const c5 = resample(m1.slice(-3000), 5);
+    // Volatility on completed 5-minute candles: true range, ATR(14), and ATR relative to the
+    // average ATR at the same time of day over the previous 20 sessions. A still-forming last
+    // candle is left out. 9,000 one-minute candles cover those 20 sessions with room to spare.
+    const c5 = resample(m1.slice(-9000), 5);
     if (c5.length && m1[m1.length - 1].t < c5[c5.length - 1].t + 240) c5.pop();
     const tr = trueRanges(c5);
     const a = atr(c5, 14);
     s.tr5 = last(tr);
     s.atr5 = last(a);
-    s.relAtr = relativeAtr(a, 100);
+    const rel = relativeAtrByTime(c5, a, 20);
+    s.relAtr = rel?.ratio ?? null;
+    s.atrUsual = rel?.usual ?? null;
+    s.relAtrSessions = rel?.sessions ?? 0;
+    s.atrUsualCurve = new Array(SESSION_MINUTES).fill(null);
+    for (const [sod, v] of rel?.usualCurve ?? []) {
+      const i = Math.floor((sod - 33300) / 60); // 33300 s = 09:15
+      if (i >= 0 && i < SESSION_MINUTES) s.atrUsualCurve[i] = v;
+    }
     // Swing highs and lows on the same candles (most recent last). A swing needs 2 completed
     // candles after it, so the newest one is always at least 10 minutes old.
     const sw = swings(c5.slice(-300), SWING_WING);
@@ -211,6 +220,8 @@ export class RvolEngine {
       atr5: s.atr5 ?? null,
       atrPct: s.atr5 && s.ltp ? (s.atr5 / s.ltp) * 100 : null,
       relAtr: s.relAtr ?? null,
+      atrUsual: s.atrUsual ?? null,
+      relAtrSessions: s.relAtrSessions ?? 0,
       vwapDevAtr: s.ltp != null && s.vwap && s.atr5 ? (s.ltp - s.vwap) / s.atr5 : null,
       asOf: s.asOf ?? null,
       recv: s.recv ?? null,
@@ -229,6 +240,6 @@ export class RvolEngine {
   detail(sym) {
     const s = this.state.get(sym);
     if (!s) return null;
-    return { ...this.row(sym), average: s.baseline?.curve ?? null, today: s.today ?? null, price: s.price ?? null, vwapCurve: s.vwapCurve ?? null, trCurve: s.trCurve ?? null, atrCurve: s.atrCurve ?? null, rocCurve: s.rocCurve ?? null, rsiCurve: s.rsiCurve ?? null, emaCurve: s.emaCurve ?? null, slopeCurve: s.slopeCurve ?? null };
+    return { ...this.row(sym), average: s.baseline?.curve ?? null, today: s.today ?? null, price: s.price ?? null, vwapCurve: s.vwapCurve ?? null, trCurve: s.trCurve ?? null, atrCurve: s.atrCurve ?? null, atrUsualCurve: s.atrUsualCurve ?? null, rocCurve: s.rocCurve ?? null, rsiCurve: s.rsiCurve ?? null, emaCurve: s.emaCurve ?? null, slopeCurve: s.slopeCurve ?? null };
   }
 }

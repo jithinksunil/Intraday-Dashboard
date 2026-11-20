@@ -180,12 +180,43 @@ function wilder(xs, n) {
 /** ATR with Wilder smoothing. */
 export const atr = (candles, n = 14) => wilder(trueRanges(candles), n);
 
-/** Current ATR divided by its own average over the previous `lookback` bars (1 = normal). */
+/** Current ATR divided by its own average over the previous `lookback` bars. Ignores time of day; see relativeAtrByTime. */
 export function relativeAtr(atrSeries, lookback = 100) {
   const vals = atrSeries.filter((x) => x != null);
   if (vals.length < 2) return null;
   const prior = vals.slice(-lookback - 1, -1);
   return last(vals) / mean(prior);
+}
+
+/**
+ * ATR compared with its usual level at the same time of day: the latest ATR divided by the
+ * average ATR at the same clock time over the previous `lookback` sessions.
+ * `candles` and `atrSeries` are aligned (intraday candles spanning several sessions).
+ * Returns { ratio, usual, sessions, usualCurve } or null. usualCurve maps a time of day
+ * (seconds since IST midnight) to the average ATR at that time, for charting.
+ */
+export function relativeAtrByTime(candles, atrSeries, lookback = 20) {
+  if (!candles.length) return null;
+  const lastDay = istDay(candles[candles.length - 1].t);
+  // Per earlier session: time of day -> ATR.
+  const byDay = new Map();
+  candles.forEach((k, i) => {
+    const d = istDay(k.t);
+    if (d === lastDay || atrSeries[i] == null) return;
+    if (!byDay.has(d)) byDay.set(d, new Map());
+    byDay.get(d).set(istSecOfDay(k.t), atrSeries[i]);
+  });
+  const days = [...byDay.keys()].sort((a, b) => a - b).slice(-lookback).map((d) => byDay.get(d));
+  const usualCurve = new Map();
+  const sums = new Map();
+  for (const day of days) for (const [sod, v] of day) sums.set(sod, [...(sums.get(sod) ?? []), v]);
+  for (const [sod, vals] of sums) usualCurve.set(sod, mean(vals));
+  const sod = istSecOfDay(candles[candles.length - 1].t);
+  const same = sums.get(sod) ?? [];
+  const current = atrSeries[atrSeries.length - 1];
+  if (!same.length || current == null) return { ratio: null, usual: null, sessions: same.length, usualCurve };
+  const usual = mean(same);
+  return { ratio: usual ? current / usual : null, usual, sessions: same.length, usualCurve };
 }
 
 /** ADX with +DI and -DI (Wilder). */

@@ -136,3 +136,31 @@ test('chandelier, returnPct, correlation', () => {
   near(ind.correlation([1, 2, 3, 4], [2, 4, 6, 8]), 1);
   near(ind.correlation([1, 2, 3, 4], [8, 6, 4, 2]), -1);
 });
+
+test('relativeAtrByTime compares with the same clock time on earlier sessions', () => {
+  // Three sessions of 5-minute candles. Ranges: day 1 and 2 are 2 in the morning and 6 in the
+  // afternoon; day 3 (today) is 4 all morning.
+  const day = (date, range) => Array.from({ length: 40 }, (_, i) => {
+    const r = typeof range === 'function' ? range(i) : range;
+    return bar(ist(`${date}T09:15:00`) + i * 300, 100, 100 + r / 2, 100 - r / 2, 100);
+  });
+  const shape = (i) => (i < 20 ? 2 : 6);
+  const candles = [...day('2026-11-17', shape), ...day('2026-11-18', shape), ...day('2026-11-19', 4).slice(0, 18)];
+  const a = ind.atr(candles, 14);
+  const rel = ind.relativeAtrByTime(candles, a, 20);
+  // At 10:40 (index 17) the earlier days' ATR: day 1 is 2 exactly; day 2 is still decaying from 6 towards 2.
+  assert.equal(rel.sessions, 2);
+  const d1 = a[17], d2 = a[40 + 17];
+  near(rel.usual, (d1 + d2) / 2);
+  near(rel.ratio, ind.last(a) / rel.usual);
+  assert.ok(rel.usual < 3.5 && rel.ratio > 1, 'compared with the calm mornings, not the busy afternoons');
+  // The plain 100-candle version mixes in the afternoons and reads lower.
+  assert.ok(ind.relativeAtr(a, 100) < rel.ratio);
+  assert.equal(rel.usualCurve.get(9 * 3600 + 15 * 60 + 17 * 300), rel.usual);
+  // lookback keeps only the most recent sessions
+  near(ind.relativeAtrByTime(candles, a, 1).usual, d2);
+  // No earlier session -> no ratio
+  const only = day('2026-11-19', 4);
+  assert.equal(ind.relativeAtrByTime(only, ind.atr(only, 14)).ratio, null);
+  assert.equal(ind.relativeAtrByTime([], []), null);
+});
