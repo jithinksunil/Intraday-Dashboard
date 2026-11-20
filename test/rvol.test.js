@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { istDay } from '../src/lib/indicators.js';
-import { buildBaseline, cumulativeCurve, expectedVolume, rvolAt, todayCurve } from '../src/lib/rvol.js';
+import { buildBaseline, cumulativeCurve, expectedVolume, rvolAt, todayCurve, windowRvol } from '../src/lib/rvol.js';
 
 const ist = (s) => Date.parse(`${s}+05:30`) / 1000;
 /** Full 375-minute session with `v` volume per minute. */
@@ -52,4 +52,16 @@ test('today curve stops at the last stored minute', () => {
   const c = todayCurve([...history, ...session('2026-11-20', 10, 3)], TODAY);
   assert.deepEqual(c.slice(0, 4), [10, 20, 30, null]);
   assert.equal(todayCurve(history, TODAY)[0], null);
+});
+
+test('windowRvol compares a recent window with the same minutes on earlier sessions', () => {
+  const b = buildBaseline(history, TODAY); // 200 a minute on average
+  // Today: 600 a minute for the first 15 minutes, then 100 a minute for the next 15.
+  const today = [...session('2026-11-20', 600, 15), ...session('2026-11-20', 100, 30).slice(15)];
+  const cum = todayCurve([...history, ...today], TODAY);
+  assert.deepEqual(windowRvol(cum, b, 15, 15), { volume: 9000, usual: 3000, rvol: 3 });
+  assert.deepEqual(windowRvol(cum, b, 30, 15), { volume: 1500, usual: 3000, rvol: 0.5 });
+  assert.equal(windowRvol(cum, b, 35, 15), null, 'minutes 30-34 are not stored yet');
+  assert.equal(windowRvol(cum, b, 10, 15), null, 'window starts before the open');
+  assert.equal(windowRvol(cum, null, 30, 15), null);
 });

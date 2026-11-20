@@ -168,6 +168,8 @@
   .chk { display: inline-block; width: 18px; font-weight: 700; text-align: center; }
   .chk.yes { color: var(--up); } .chk.no { color: var(--down); } .chk.na { color: var(--muted); }
   .zone-text { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+  .est { display: inline-block; padding: 0 5px; border: 1px dashed var(--muted); border-radius: 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; vertical-align: middle; }
+  .readlist { margin: 0 0 18px; padding-left: 18px; color: var(--muted); font-size: 13px; }
   .tile-label { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .tile-verdict { margin: 10px 0 0; font-size: 13px; }
   .back { display: inline-block; margin-bottom: 12px; color: var(--accent); text-decoration: none; font-size: 13px; }
@@ -595,6 +597,61 @@ function rateEmaSlope(v) {
   const label = band.label === 'Excellent' ? `Excellent · strong ${dir} trend` : band.label === 'Good' ? `Good ${dir} candidate` : `Weak ${dir} trend · avoid`;
   return { ...band, label, slopeText: `${band.slope} ${dir} slope` };
 }
+// ----- Order flow & pressure. Values come from the server; these only choose the wording and colour. -----
+const FLOW_DOMINANCE = {
+  'strong selling dominance': { grade: 'sell', label: 'Strong selling dominance' },
+  'moderate selling dominance': { grade: 'sell weak', label: 'Moderate selling dominance' },
+  balanced: { grade: 'neutral', label: 'Balanced' },
+  'moderate buying dominance': { grade: 'buy weak', label: 'Moderate buying dominance' },
+  'strong buying dominance': { grade: 'buy', label: 'Strong buying dominance' },
+};
+/** side: 'sell' or 'buy'. Red only for selling pressure increasing, green only for buying pressure increasing. */
+function pressureRating(side, change) {
+  if (!change) return null;
+  const name = side === 'sell' ? 'Selling' : 'Buying';
+  if (change === 'increasing') return { grade: side, label: `${name} pressure increasing ↑` };
+  if (change === 'decreasing') return { grade: 'neutral', label: `${name} pressure decreasing ↓` };
+  return { grade: 'neutral', label: `${name} pressure flat →` };
+}
+function cvdRating(f) {
+  if (!f) return null;
+  if (f.divergence === 'bullish') return { grade: 'buy weak', label: 'Potential bullish divergence' };
+  if (f.divergence === 'bearish') return { grade: 'sell weak', label: 'Potential bearish divergence' };
+  if (f.cvdTrend === 'rising') return { grade: 'buy', label: 'Buying aggression increasing ↑' };
+  if (f.cvdTrend === 'falling') return { grade: 'sell', label: 'Selling aggression increasing ↓' };
+  if (f.cvdTrend === 'sideways') return { grade: 'neutral', label: 'Balanced order flow →' };
+  return null;
+}
+const volumeTrendRating = (t) => (t === 'rising' ? { grade: 'verygood', label: 'Volume rising ↑' } : t === 'falling' ? { grade: 'average', label: 'Volume falling ↓' } : t === 'steady' ? { grade: 'neutral', label: 'Volume steady →' } : null);
+function bookQtyRating(side, t) {
+  if (!t?.label) return null;
+  const name = side === 'ask' ? 'Ask' : 'Bid';
+  if (t.label === 'flat') return { grade: 'neutral', label: `${name} quantity flat →` };
+  const up = t.label === 'increasing';
+  // More quantity offered for sale, or less bid for, leans to the sell side; the reverse to the buy side.
+  const sellSide = (side === 'ask') === up;
+  return { grade: sellSide ? 'sell weak' : 'buy weak', label: `${name} quantity ${up ? 'increasing ↑' : 'reducing ↓'}` };
+}
+const sessionClock = (minute) => { const m = 555 + minute; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+const waitText = (minutes) => (minutes == null ? 'waiting for live data' : minutes > 0 ? `collecting · ${minutes} min more` : 'not available for this window');
+// A server started before this countdown existed doesn't send it; the order-flow change tiles
+// compare the same two 15-minute windows, so their countdown is used instead.
+const bookWaitText = (t, f) => {
+  const m = t?.minutesUntil ?? f?.minutesUntilChange;
+  return m > 0 ? `collecting · ${m} min more` : 'collecting · needs 30 min of live data';
+};
+const EST = '<span class="est" title="Estimated from once-a-second snapshots, not from individual trades">estimated</span>';
+function flowVerdict(f) {
+  if (!f) return 'Order flow starts once live quotes arrive during market hours.';
+  if (f.sellShare == null) return `Collecting live data: the first 15-minute window needs ${f.minutesUntilShare ?? '?'} more minute(s).`;
+  const parts = [`${FLOW_DOMINANCE[f.dominance].label}: sellers ${f.sellShare.toFixed(0)}%, buyers ${f.buyShare.toFixed(0)}% of classified volume in the last 15 minutes.`];
+  if (f.sellChange) parts.push(`Selling pressure is ${f.sellChange === 'flat' ? 'relatively flat' : f.sellChange} and buying pressure is ${f.buyChange == null ? 'not available' : f.buyChange === 'flat' ? 'relatively flat' : f.buyChange}, against the 15 minutes before.`);
+  return parts.join(' ');
+}
+
+const tone = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down');
+const rupee = (v) => (v == null ? '–' : '₹' + price.format(v));
+const pct = (v, d = 2) => (v == null ? '–' : signed(v, d) + '%');
 const badge = (rating) => (rating ? `<span class="badge ${rating.grade}">${rating.label}</span>` : '');
 
 // The EMA slope is measured over this many candles (must match SLOPE_BARS in src/lib/rvolEngine.js).
@@ -616,7 +673,7 @@ function tradePlan(r) {
 }
 
 // Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
-const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance'], ['s-exec', 'Execution']];
+const SECTIONS = [['s-book', 'Order book'], ['s-flow', 'Order Flow & Pressure'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance'], ['s-exec', 'Execution']];
 const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
 // The stock and section in view are remembered, so a reload comes back to the same place.
 const remember = (key, value) => { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* storage unavailable */ } };
@@ -632,13 +689,45 @@ function renderDetail() {
   const c = curves && curves.sym === selected ? curves : null;
   const stale = r.asOf && Date.now() - r.asOf > 60000;
   const plan = tradePlan(r);
+  const f = r.flow ?? null; // estimated order flow; null on an older server
   drawCharts = Boolean(view); // the overview shows no charts, so don't build them
   const full = `
+    <div class="metric" id="s-flow">
+      <div class="hero"><span class="big num">${f?.sellShare == null ? '–' : f.sellShare.toFixed(0) + '%'}</span><span class="label">sell volume share, last 15 minutes ${EST} ${f?.sellShare == null ? '' : badge(FLOW_DOMINANCE[f.dominance])}</span></div>
+      <p class="verdict">${flowVerdict(f)}</p>
+      ${f?.sellShare == null ? '' : `<div class="split" role="img" aria-label="Share of classified volume: buyers ${f.buyShare.toFixed(0)} percent, sellers ${f.sellShare.toFixed(0)} percent"><div class="b" style="width:${f.buyShare.toFixed(1)}%"></div><div class="a" style="flex:1"></div></div>
+      <div class="split-labels"><span>Buy ${f.buyShare.toFixed(1)}% · ${compact.format(f.buyVolume)}</span><span>Sell ${f.sellShare.toFixed(1)}% · ${compact.format(f.sellVolume)}</span></div>`}
+      <div class="stats">
+        <div class="stat"><div class="k">Sell volume share</div><div class="v num">${f?.sellShare == null ? '–' : f.sellShare.toFixed(1) + '%'}</div><div class="k">${f?.sellShare == null ? waitText(f?.minutesUntilShare) : badge(FLOW_DOMINANCE[f.dominance])}</div></div>
+        <div class="stat"><div class="k">Buy volume share</div><div class="v num">${f?.buyShare == null ? '–' : f.buyShare.toFixed(1) + '%'}</div><div class="k">above 60% sell = strong selling · 55–60 moderate · 45–55 balanced · 40–45 moderate buying · below 40 strong buying</div></div>
+        <div class="stat"><div class="k">Sell volume change</div><div class="v num">${pct(f?.sellChangePct, 0)}</div><div class="k">${f?.sellChangePct == null ? waitText(f?.minutesUntilChange) : badge(pressureRating('sell', f.sellChange))}</div></div>
+        <div class="stat"><div class="k">Buy volume change</div><div class="v num">${pct(f?.buyChangePct, 0)}</div><div class="k">${f?.buyChangePct == null ? waitText(f?.minutesUntilChange) : badge(pressureRating('buy', f.buyChange))}</div></div>
+        <div class="stat"><div class="k">Total volume change (context)</div><div class="v num">${pct(f?.totalChangePct, 0)}</div><div class="k">all volume, same two windows. Volume normally falls from morning to midday, so read the two changes against this</div></div>
+        <div class="stat"><div class="k">CVD (session)</div><div class="v num ${tone(f?.cvd)}">${f?.cvd == null ? '–' : signed(f.cvd, 0).replace(/\d+/, (d) => qty.format(Number(d)))}</div><div class="k">${f?.cvd == null ? 'waiting for live data' : 'buy − sell volume since ' + sessionClock(f.coveredFromMinute)}</div></div>
+        <div class="stat"><div class="k">CVD change, last 15 min</div><div class="v num ${tone(f?.cvdRate)}">${f?.cvdRate == null ? '–' : signed(f.cvdRate, 0).replace(/\d+/, (d) => qty.format(Number(d)))}</div><div class="k">${f?.cvdRate == null ? waitText(f?.minutesUntilShare) : 'rate of change of CVD'}</div></div>
+        <div class="stat"><div class="k">CVD trend</div><div class="v num">${f?.cvdTrend ? f.cvdTrend[0].toUpperCase() + f.cvdTrend.slice(1) : '–'}</div><div class="k">${f?.cvdTrend == null ? waitText(f?.minutesUntilTrend) : badge(cvdRating(f))}</div></div>
+        <div class="stat"><div class="k">Unclassified volume</div><div class="v num">${f?.unclassifiedShare == null ? (f?.sessionUnclassifiedShare == null ? '–' : f.sessionUnclassifiedShare.toFixed(1) + '%') : f.unclassifiedShare.toFixed(1) + '%'}</div><div class="k">${f?.sessionUnclassifiedShare == null ? '' : 'session: ' + f.sessionUnclassifiedShare.toFixed(1) + '% · kept apart, never assigned to a side'}</div></div>
+        <div class="stat"><div class="k">Volume sharing a label</div><div class="v num">${f?.sessionMultiTradeShare == null ? '–' : f.sessionMultiTradeShare.toFixed(0) + '%'}</div><div class="k">arrived as several trades in one snapshot, so they share one buy/sell label. This is why the figures are estimates</div></div>
+      </div>
+      <div class="chart-head"><h3>CVD through the session ${EST}</h3><div class="legend"><span>CVD</span></div></div>
+      ${c ? chartSvg([{ data: c.cvdCurve, cls: 'l-today' }], { guides: [0], format: (v) => compact.format(v), label: 'Estimated cumulative volume delta through the session, with zero marked' }) : '<p class="empty">Loading chart…</p>'}
+      <div class="chart-head" style="margin-top:18px"><h3>Reading these together (information only, not signals)</h3></div>
+      <ul class="readlist">
+        <li>Price falling, sell volume increasing, CVD falling: bearish pressure strengthening.</li>
+        <li>Price falling, sell volume decreasing, price stabilising: possible selling-pressure exhaustion.</li>
+        <li>Price falling while CVD rises: potential bullish divergence.</li>
+        <li>Price rising, buy volume increasing, CVD rising: bullish pressure strengthening.</li>
+      </ul>
+      <p class="note"><b>These are estimates.</b> The Fyers feed has no trade-by-trade data. It sends a snapshot about once a second, so the volume traded between two snapshots gets one label: buying if the last price is at or above the previous ask (or above the midpoint), selling if at or below the previous bid (or below the midpoint), otherwise by the direction of the price change. Volume that can't be labelled is kept as unclassified. Windows are completed 5-minute candles: the last three against the three before. CVD = running total of buy − sell volume; it resets each session and only covers the time this server was running. CVD trend is the slope of CVD over the last 30 minutes relative to average volume. A divergence is flagged only when two confirmed price swings and CVD disagree. Nothing here places or suggests a trade.</p>
+    </div>
+
     <div class="metric" id="s-volume">
     <div class="hero"><span class="big num">${fmtRvol(r.rvol)}</span><span class="label">relative volume (RVOL) ${badge(rate('rvol', r.rvol))}</span></div>
     <p class="verdict">${r.rvol == null ? (r.baselineSessions ? 'RVOL starts once the market opens at 09:15 IST.' : 'No volume history for this stock yet, so RVOL can\'t be calculated.') : verdict(r.rvol)}</p>
     <div class="stats">
       <div class="stat"><div class="k">Volume ${stale ? 'for the day' : 'so far today'}</div><div class="v num">${fmt(compact, r.volume)}</div></div>
+      <div class="stat"><div class="k">Recent RVOL (last 15 min)</div><div class="v num">${fmtRvol(r.recentRvol)} ${badge(rate('rvol', r.recentRvol))}</div><div class="k">${r.recentRvol == null ? 'needs 15 minutes of today\'s candles' : 'the last 15 minutes against the usual for those minutes'}</div></div>
+      <div class="stat"><div class="k">Volume trend</div><div class="v num">${pct(r.volumeTrendPct, 0)}</div><div class="k">${r.volumeTrendPct == null ? 'needs 30 minutes of today\'s candles' : badge(volumeTrendRating(r.volumeTrend)) + ' recent RVOL was ' + fmtRvol(r.priorRvol) + ' 15 min earlier'}</div></div>
       <div class="stat"><div class="k">RVOL scale</div><div class="v num" style="font-size:14px">0 ← quieter · <b>1× = usual</b> · busier →</div><div class="k">never below 0 · no upper limit</div></div>
       <div class="stat"><div class="k">Usual volume by this time</div><div class="v num">${fmt(compact, r.expected)}</div></div>
       <div class="stat"><div class="k">Compared against</div><div class="v num">${r.baselineSessions ? 'last ' + r.baselineSessions + ' sessions' : '–'}</div></div>
@@ -647,6 +736,9 @@ function renderDetail() {
     <div class="chart-head"><h3>Cumulative volume through the session</h3>
       <div class="legend"><span>${stale && r.asOf ? dayText(r.asOf) : 'Today'}</span><span class="avg">Average</span></div></div>
     ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
+    <div class="chart-head" style="margin-top:18px"><h3>Recent RVOL through the session (15-minute windows)</h3><div class="legend"><span>Recent RVOL</span></div></div>
+    ${c ? chartSvg([{ data: c.recentRvolCurve, cls: 'l-today' }], { fromZero: true, guides: [{ v: 1, label: '1× usual' }], format: (v) => v.toFixed(1) + '×', label: 'RVOL of each 15-minute window through the session, with 1 marked' }) : '<p class="empty">Loading chart…</p>'}
+    <p class="note">Day RVOL is cumulative, so it stays high after an active morning. Recent RVOL looks only at the last 15 minutes against the usual volume of those same minutes, so it shows whether activity is there now. Volume trend compares it with the 15 minutes before: rising above +20%, falling below −20%. Both use completed candles and refresh every 5 minutes.</p>
     <p class="note">RVOL = volume so far ÷ average volume by the same time of day. 1× is the base: exactly the usual volume. Below 1 means quieter than usual, above 1 means busier. It can never go below 0, because volume can't be negative. Ratings: under 1 below normal · 1–1.5 slightly above normal · 1.5–2 good · 2–3 very good · 3 and above excellent.</p>
     </div>
 
@@ -727,9 +819,12 @@ function renderDetail() {
         <div class="stat"><div class="k">Spread (₹)</div><div class="v num">${r.spread == null ? '–' : '₹' + price.format(r.spread)}</div></div>
         <div class="stat"><div class="k">Imbalance, top 5 levels</div><div class="v num ${r.imbalance5 == null ? '' : r.imbalance5 >= 0 ? 'up' : 'down'}">${signed(r.imbalance5)} ${r.bookLive ? badge(rate('imbalance', r.imbalance5)) : ''}</div></div>
         <div class="stat"><div class="k">Imbalance, whole book</div><div class="v num ${r.imbalanceBook == null ? '' : r.imbalanceBook >= 0 ? 'up' : 'down'}">${signed(r.imbalanceBook)} ${r.bookLive ? badge(rate('imbalance', r.imbalanceBook)) : ''}</div></div>
+        <div class="stat"><div class="k">Ask quantity trend</div><div class="v num">${pct(r.askQtyTrend?.pct, 0)}</div><div class="k">${r.askQtyTrend?.pct == null ? bookWaitText(r.askQtyTrend, r.flow) : badge(bookQtyRating('ask', r.askQtyTrend))}</div></div>
+        <div class="stat"><div class="k">Bid quantity trend</div><div class="v num">${pct(r.bidQtyTrend?.pct, 0)}</div><div class="k">${r.bidQtyTrend?.pct == null ? bookWaitText(r.bidQtyTrend, r.flow) : badge(bookQtyRating('bid', r.bidQtyTrend))}</div></div>
       </div>
       <div class="chart-head"><h3>Order book depth (best 5 levels each side)</h3></div>
       ${bookTable(r.book)}
+      <p class="note">Ask and bid quantity trend: the average sell and buy quantity across the whole book over the last 15 minutes, against the 15 minutes before (increasing above +10%, reducing below −10%). It needs 30 minutes of live data and restarts when the server restarts.</p>
       <p class="note">Spread % = (best ask − best bid) ÷ their midpoint: the cost of crossing the book. 0 is the base: no gap between buyers and sellers. It can never go below 0 and has no fixed upper limit, but it is usually under 0.2%. Anything above 0.1% is rated bad and not considered for a trade. Imbalance = (buy quantity − sell quantity) ÷ (buy + sell), from −1 (all sellers) to +1 (all buyers). "Whole book" uses the exchange's total buy and sell quantity across every level. Displayed orders can be cancelled at any time, so treat imbalance as a hint, not proof of buying or selling.</p>
     </div>
 
@@ -793,13 +888,17 @@ function renderDetail() {
     return;
   }
   // Overview: one tile per calculation. Each opens the section that calculation belongs to.
-  const tone = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down');
-  const rupee = (v) => (v == null ? '–' : '₹' + price.format(v));
-  const pct = (v, d = 2) => (v == null ? '–' : signed(v, d) + '%');
   const level = (lv) => (lv ? { value: rupee(lv.price), sub: (lv.name ? lv.name + ' · ' : '') + signed(lv.distancePct) + '% away' + (lv.broken ? ' · broken' : '') } : { value: '–', sub: '' });
   const pivS = level(r.support), pivR = level(r.resistance), swS = level(r.swingLow), swR = level(r.swingHigh);
   const TILES = [
+    ['s-flow', 'Sell volume share', f?.sellShare == null ? '–' : f.sellShare.toFixed(1) + '%', '', f?.sellShare == null ? waitText(f?.minutesUntilShare) : `buy ${f.buyShare.toFixed(1)}% · last 15 min · ${EST}`, `Sell volume share % = sell volume ÷ (buy volume + sell volume) × 100`, f?.sellShare == null ? null : FLOW_DOMINANCE[f.dominance]],
+    ['s-flow', 'Sell volume change', pct(f?.sellChangePct, 0), '', f?.sellChangePct == null ? waitText(f?.minutesUntilChange) : `vs previous 15 min · ${EST}`, `Sell volume change % = (recent sell volume − previous sell volume) ÷ previous sell volume × 100`, pressureRating('sell', f?.sellChange)],
+    ['s-flow', 'Buy volume change', pct(f?.buyChangePct, 0), '', f?.buyChangePct == null ? waitText(f?.minutesUntilChange) : `vs previous 15 min · ${EST}`, `Buy volume change % = (recent buy volume − previous buy volume) ÷ previous buy volume × 100`, pressureRating('buy', f?.buyChange)],
+    ['s-flow', 'CVD', f?.cvd == null ? '–' : signed(f.cvd, 0).replace(/\d+/, (d) => compact.format(Number(d))), tone(f?.cvd), f?.cvd == null ? 'waiting for live data' : `since ${sessionClock(f.coveredFromMinute)} · ${EST}`, `CVD = previous CVD + (buy volume − sell volume). Resets each session`, null],
+    ['s-flow', 'CVD trend', f?.cvdTrend ? f.cvdTrend[0].toUpperCase() + f.cvdTrend.slice(1) : '–', f?.cvdTrend === 'rising' ? 'up' : f?.cvdTrend === 'falling' ? 'down' : '', f?.cvdTrend == null ? waitText(f?.minutesUntilTrend) : `slope over 30 min · ${EST}`, `CVD trend = slope of CVD over the last 6 five-minute candles ÷ average candle volume`, cvdRating(f)],
     ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'base 1× = usual · below 1 quieter · above 1 busier · never below 0', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`, rate('rvol', r.rvol)],
+    ['s-volume', 'Recent RVOL', fmtRvol(r.recentRvol), '', r.recentRvol == null ? 'needs 15 min of today\'s candles' : 'last 15 min vs usual for those minutes', `Recent RVOL = volume of the last 15 minutes ÷ average volume of the same 15 minutes over the last 20 sessions`, rate('rvol', r.recentRvol)],
+    ['s-volume', 'Volume trend', pct(r.volumeTrendPct, 0), '', r.volumeTrendPct == null ? 'needs 30 min of today\'s candles' : 'recent RVOL vs 15 min earlier', `Volume trend % = (recent RVOL − RVOL of the previous 15 minutes) ÷ RVOL of the previous 15 minutes × 100`, volumeTrendRating(r.volumeTrend)],
     ['s-vwap', 'VWAP', rupee(r.vwap), '', 'average price traded today', `VWAP = Σ(price × volume) ÷ Σ(volume) for today's trades (taken from the exchange feed)`],
     ['s-vwap', 'VWAP deviation', pct(r.vwapDevPct), tone(r.vwapDevPct), r.vwap == null ? '' : signed(r.ltp - r.vwap) + ' ₹ from VWAP', `VWAP deviation % = (last price − VWAP) ÷ VWAP × 100`],
     ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'base 0 = at VWAP · &lt; 0 below VWAP · &gt; 0 above VWAP', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`, rateVwapDev(r.vwapDevAtr)],
@@ -814,6 +913,8 @@ function renderDetail() {
     ['s-trend', 'Normalized EMA slope %', pct(emaSlopePerCandle(r), 4), tone(r.emaSlopePct), 'EMA slope ÷ 5 candles = change per candle', `Normalized EMA slope % = EMA slope % ÷ number of candles (5)`, rateEmaSlope(emaSlopePerCandle(r))],
     ['s-book', 'Spread %', r.spreadPct == null ? '–' : r.spreadPct.toFixed(4) + '%', '', r.spread == null ? (r.book && !r.bookLive ? 'market closed' : 'never below 0 · usually below 0.2%') : '₹' + price.format(r.spread) + ' bid to ask · never below 0 · usually below 0.2%', `Spread % = (best ask − best bid) ÷ ((best ask + best bid) ÷ 2) × 100`, rate('spreadPct', r.spreadPct)],
     ['s-book', 'Order book imbalance', signed(r.imbalance5), tone(r.imbalance5), r.book && !r.bookLive ? 'market closed · leftover book' : 'top 5 levels, −1 to +1', `Imbalance = (bid quantity − ask quantity) ÷ (bid quantity + ask quantity), over the top 5 levels`, r.bookLive ? rate('imbalance', r.imbalance5) : null],
+    ['s-book', 'Ask quantity trend', pct(r.askQtyTrend?.pct, 0), '', r.askQtyTrend?.pct == null ? bookWaitText(r.askQtyTrend, r.flow) : 'whole-book sell quantity, last 15 min vs previous', `Ask quantity trend % = (average sell quantity, last 15 min − previous 15 min) ÷ previous 15 min × 100`, bookQtyRating('ask', r.askQtyTrend)],
+    ['s-book', 'Bid quantity trend', pct(r.bidQtyTrend?.pct, 0), '', r.bidQtyTrend?.pct == null ? bookWaitText(r.bidQtyTrend, r.flow) : 'whole-book buy quantity, last 15 min vs previous', `Bid quantity trend % = (average buy quantity, last 15 min − previous 15 min) ÷ previous 15 min × 100`, bookQtyRating('bid', r.bidQtyTrend)],
     ['s-levels', 'Nearest support (pivot)', pivS.value, '', pivS.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. S1 = 2 × pivot − high, S2 = pivot − (high − low), S3 = low − 2 × (high − pivot). Shown: the closest level at or below the price`],
     ['s-levels', 'Nearest resistance (pivot)', pivR.value, '', pivR.sub, `Pivot = (prev high + prev low + prev close) ÷ 3. R1 = 2 × pivot − low, R2 = pivot + (high − low), R3 = high + 2 × (pivot − low). Shown: the closest level above the price`],
     ['s-swings', 'Nearest support (swing)', swS.value, '', swS.sub, `Last swing low = low of the most recent 5-minute candle whose low is the lowest of 5 candles (itself and 2 on each side)`],
@@ -844,7 +945,7 @@ async function loadCurves(sym) {
     const res = await fetch('/api/detail?sym=' + encodeURIComponent(sym));
     if (!res.ok) return;
     const d = await res.json();
-    if (sym === selected) { curves = { sym, average: d.average, today: d.today, price: d.price, vwapCurve: d.vwapCurve, trCurve: d.trCurve, atrCurve: d.atrCurve, atrUsualCurve: d.atrUsualCurve, rocCurve: d.rocCurve, rsiCurve: d.rsiCurve, emaCurve: d.emaCurve, slopeCurve: d.slopeCurve }; renderDetail(); }
+    if (sym === selected) { curves = { sym, cvdCurve: d.cvdCurve, recentRvolCurve: d.recentRvolCurve, average: d.average, today: d.today, price: d.price, vwapCurve: d.vwapCurve, trCurve: d.trCurve, atrCurve: d.atrCurve, atrUsualCurve: d.atrUsualCurve, rocCurve: d.rocCurve, rsiCurve: d.rsiCurve, emaCurve: d.emaCurve, slopeCurve: d.slopeCurve }; renderDetail(); }
   } catch { /* server down; the socket status already says so */ }
 }
 

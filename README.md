@@ -100,6 +100,37 @@ is stored) and builds the baseline: the average cumulative volume at each minute
   of the day, more in the first minutes after the open.
 - The server listens on localhost only. `--port 4001` changes the port.
 
+### Order flow and pressure (estimated)
+
+The dashboard's "Order Flow & Pressure" section shows sell and buy volume share, how each has
+changed over the last two 15-minute windows, and CVD with its trend.
+
+**These are estimates.** Fyers has no trade-by-trade feed, so there is no record of which side
+started each trade. The data socket sends a snapshot when something changes (measured live:
+0.3 to 2.3 a second per stock), and nearly all volume arrives as several trades per snapshot.
+The volume between two snapshots therefore gets one label ([src/lib/orderFlow.js](src/lib/orderFlow.js)):
+
+- last price at or above the previous ask, or above the midpoint: buying;
+- at or below the previous bid, or below the midpoint: selling;
+- exactly at the midpoint, or no usable quote: the direction of the price change (tick rule);
+- otherwise unclassified, which is counted and shown but never assigned to a side.
+
+Candle colour is never used. Volume across a reconnect, a restart, or the session open is
+left unclassified, and a window that includes such a break is withheld rather than shown.
+
+- Windows are completed 5-minute candles: the last three against the three before.
+- CVD resets each session and only covers the time the server was running. The per-minute
+  totals are saved to `data/flow/<date>/` every minute, so a restart keeps the day's CVD. The whole-book ask / bid quantity
+  samples are saved in the same files, so those trends also continue after a restart.
+- The first share needs 15 minutes of live data; changes and the CVD trend need 30.
+- Window lengths and thresholds are in `DEFAULT_FLOW_CONFIG`.
+
+Two exact companions sit beside it: **recent RVOL** (the last 15 minutes of volume against the
+usual for those minutes, from candles) and the **ask / bid quantity trend** (whole-book
+quantity, last 15 minutes against the 15 before).
+
+Nothing in this section places or suggests a trade.
+
 ## Calculating the metrics
 
 ```bash

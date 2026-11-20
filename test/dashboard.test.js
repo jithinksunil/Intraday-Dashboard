@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import WebSocket from 'ws';
 import { createDashboardServer } from '../src/lib/dashboardServer.js';
+import { FlowBook } from '../src/lib/orderFlow.js';
 import { RvolEngine } from '../src/lib/rvolEngine.js';
 
 const ist = (s) => Date.parse(`${s}+05:30`) / 1000;
@@ -267,4 +268,117 @@ test('engine: last swing high and low from 5-candle swings on 5-minute candles',
   const none = engineWith([]).engine.onQuote(quote('2026-11-20T10:15:00', 1));
   assert.equal(none.swingHigh, null);
   assert.deepEqual(none.swingLows, []);
+});
+
+test('engine: estimated order flow, shares, changes and CVD from quotes', () => {
+  const { engine } = engineWith(HISTORY);
+  // One snapshot every 5 s from 10:00 to 10:35: 75% of volume at the bid for 15 min, then 25%.
+  let vol = 100000;
+  const base = ist('2026-11-20T10:00:00');
+  const send = (sec, o) => engine.onQuote({ k: 'q', sym: SYM, exch: (base + sec) * 1000, recv: (base + sec) * 1000 + 100, ltp: 100, ltq: 1, pc: 100, vol, bid: 99.95, ask: 100.05, tbq: 9000, tsq: 3000, ...o });
+  send(-5, {});
+  for (let sec = 0; sec < 35 * 60; sec += 5) {
+    const sellPct = sec < 20 * 60 ? 75 : 25;
+    vol += 50;
+    send(sec, { ltp: ((sec / 5) % 12) * (100 / 12) < sellPct ? 99.95 : 100.05 });
+  }
+  const row = send(35 * 60, {});
+  const f = row.flow;
+  assert.equal(f.estimated, true);
+  // recent window 10:20-10:35 (25% selling), previous 10:05-10:20 (75% selling)
+  assert.equal(f.sellShare, 25);
+  assert.equal(f.buyShare, 75);
+  assert.equal(f.dominance, 'strong buying dominance');
+  assert.ok(Math.abs(f.sellChangePct - (-200 / 3)) < 1e-9);
+  assert.equal(f.buyChangePct, 200);
+  assert.equal(f.totalChangePct, 0);
+  assert.equal(f.sellChange, 'decreasing');
+  assert.equal(f.buyChange, 'increasing');
+  assert.equal(f.cvd, 20 * 60 / 5 * 50 * -0.5 + 15 * 60 / 5 * 50 * 0.5);
+  assert.equal(f.cvdRate, 15 * 60 / 5 * 50 * 0.5);
+  assert.equal(f.sessionUnclassifiedShare, 0);
+  assert.equal(f.minutesUntilShare, 0);
+  assert.equal(engine.detail(SYM).cvdCurve.length, 375);
+  // whole-book quantity was constant, so both trends are flat
+  assert.equal(row.askQtyTrend.label, 'flat');
+  assert.equal(row.bidQtyTrend.pct, 0);
+});
+
+test('engine: flow is withheld until a full window is covered, and survives a restart via the store', () => {
+  const saved = new Map();
+  // Like FlowStore, but in memory: what is saved is the serialized form, as it would be on disk.
+  const flowStore = {
+    save: (sym, book) => saved.set(sym + book.day, JSON.stringify(book.toJSON())),
+    load: (sym, day) => (saved.has(sym + day) ? FlowBook.fromJSON(JSON.parse(saved.get(sym + day))) : null),
+  };
+  const first = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY, flowStore });
+  let vol = 5000;
+  const base = ist('2026-11-20T10:00:00');
+  const send = (engine, sec, ltp) => engine.onQuote({ k: 'q', sym: SYM, exch: (base + sec) * 1000, recv: (base + sec) * 1000, ltp, ltq: 1, pc: 100, vol, bid: 99.95, ask: 100.05 });
+  send(first, 0, 100);
+  for (let sec = 5; sec <= 8 * 60; sec += 5) { vol += 10; send(first, sec, 100.05); }
+  let f = first.row(SYM).flow;
+  assert.equal(f.sellShare, null, 'only 8 minutes covered');
+  assert.equal(f.minutesUntilShare, 7);
+  assert.equal(f.cvd, 960);
+  assert.equal(first.row(SYM).askQtyTrend.label, null, 'no book quantity samples');
+  assert.equal(first.row(SYM).askQtyTrend.minutesUntil, 27, 'no samples before 10:08, so the first usable windows are 10:05-10:20 and 10:20-10:35');
+  first.saveFlow();
+  // a new process: same store, same session
+  const second = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY, flowStore });
+  vol += 777; // traded while the server was down
+  send(second, 9 * 60, 100.05);
+  vol += 10;
+  f = send(second, 9 * 60 + 1, 100.05).flow;
+  assert.equal(f.cvd, 970, 'CVD carried over; downtime volume was not guessed');
+  second.markFeedGap();
+  vol += 500;
+  f = send(second, 9 * 60 + 3, 100.05).flow;
+  assert.equal(f.cvd, 970, 'volume across a reconnect stays unclassified');
+  assert.ok(f.sessionUnclassifiedShare > 0);
+});
+
+test('engine: whole-book quantity samples are saved, so the ask / bid trend survives a restart', () => {
+  const saved = new Map();
+  const flowStore = {
+    save: (sym, book) => saved.set(sym + book.day, JSON.stringify(book.toJSON())),
+    load: (sym, day) => (saved.has(sym + day) ? FlowBook.fromJSON(JSON.parse(saved.get(sym + day))) : null),
+  };
+  const base = ist('2026-11-20T10:00:00');
+  let vol = 5000;
+  // sell quantity 1,000 for the first 15 minutes, 1,500 after; buy quantity constant
+  const send = (engine, sec) => {
+    vol += 10;
+    return engine.onQuote({ k: 'q', sym: SYM, exch: (base + sec) * 1000, recv: (base + sec) * 1000, ltp: 100, ltq: 1, pc: 100, vol, bid: 99.95, ask: 100.05, tbq: 2000, tsq: sec < 15 * 60 ? 1000 : 1500 });
+  };
+  const first = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY, flowStore });
+  for (let sec = 0; sec < 29 * 60; sec += 20) send(first, sec);
+  first.saveFlow();
+  const second = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY, flowStore });
+  const row = send(second, 30 * 60 + 5); // back one minute later, at 10:30
+  assert.equal(row.askQtyTrend.pct, 50);
+  assert.equal(row.askQtyTrend.label, 'increasing');
+  assert.equal(row.askQtyTrend.minutesUntil, 0);
+  assert.equal(row.bidQtyTrend.label, 'flat');
+  // without the store the same quote has nothing to compare
+  const fresh = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY });
+  assert.equal(send(fresh, 30 * 60 + 10).askQtyTrend.label, null);
+});
+
+test('engine: recent RVOL and volume trend from completed candles', () => {
+  // Baseline 200 a minute. Today: 600 a minute for 15 minutes, then 100 a minute for 15.
+  const today = [...session('2026-11-20', 600, 15), ...session('2026-11-20', 100, 30).slice(15)];
+  const { engine } = engineWith([...HISTORY, ...today]);
+  const row = engine.onQuote(quote('2026-11-20T09:46:00', 12000));
+  assert.equal(row.recentRvol, 0.5);
+  assert.equal(row.priorRvol, 3);
+  assert.ok(Math.abs(row.volumeTrendPct - (-250 / 3)) < 1e-9);
+  assert.equal(row.volumeTrend, 'falling');
+  const d = engine.detail(SYM);
+  assert.equal(d.recentRvolCurve[14], 3);
+  assert.equal(d.recentRvolCurve[29], 0.5);
+  assert.equal(d.recentRvolCurve[20], null, 'one point per 5-minute boundary');
+  const none = engineWith(HISTORY).engine.onQuote(quote('2026-11-20T09:46:00', 1));
+  assert.equal(none.recentRvol, null);
+  assert.equal(none.volumeTrend, null);
 });

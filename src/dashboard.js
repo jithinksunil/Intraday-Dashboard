@@ -12,6 +12,7 @@ import fyers from 'fyers-api-v3';
 import { CandleStore } from './lib/candleStore.js';
 import { createDashboardServer } from './lib/dashboardServer.js';
 import { loadEnv, requireEnv } from './lib/env.js';
+import { FlowStore } from './lib/flowStore.js';
 import { FatalHistoryError, RateLimiter, syncSymbol } from './lib/history.js';
 import { FyersMessageNormalizer } from './lib/normalize.js';
 import { RvolEngine } from './lib/rvolEngine.js';
@@ -88,7 +89,17 @@ const engine = new RvolEngine({
   loadCandles: (sym) => store.read(sym, '1m'),
   // The server ran past midnight: pull yesterday's candles so the new day's baseline includes them.
   onNewDay: (sym) => refreshHistory([sym]).then(() => engine.reload(sym)).catch((err) => log(err.message)),
+  // Estimated order flow is kept on disk so a restart during the session keeps the day's CVD.
+  flowStore: new FlowStore(join(args.data, 'flow')),
 });
+const FLOW_SAVE_MS = 60_000;
+const flowSaver = setInterval(() => {
+  try {
+    engine.saveFlow();
+  } catch (err) {
+    log(`could not save order flow: ${err.message}`);
+  }
+}, FLOW_SAVE_MS);
 const dash = createDashboardServer({ engine, getStatus: () => status });
 
 function setFeed(feed) {
@@ -102,6 +113,7 @@ const normalizer = new FyersMessageNormalizer();
 const socket = fyers.fyersDataSocket.getInstance(`${appId}:${accessToken}`, 'logs', false);
 socket.on('connect', () => {
   setFeed('connected');
+  engine.markFeedGap(); // volume traded while disconnected stays unclassified
   socket.subscribe(symbols);
   socket.subscribe(symbols, true); // 5-level order book
 });
@@ -170,6 +182,12 @@ if (args.lan) {
 
 const stop = async () => {
   clearInterval(refresher);
+  clearInterval(flowSaver);
+  try {
+    engine.saveFlow();
+  } catch {
+    // nothing to save
+  }
   try {
     socket.close();
   } catch {

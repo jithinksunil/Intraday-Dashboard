@@ -1,7 +1,8 @@
 // Holds the live state behind the dashboard: latest quote per symbol, the RVOL baseline, and
 // today's per-minute curves (cumulative volume, price, VWAP). Fed with normalized quote records; no I/O of its own.
 import { atr, ema, istDay, last, pctChange, pivots, relativeAtrByTime, resample, roc, rsi, swings, toDaily, trueRanges } from './indicators.js';
-import { buildBaseline, minuteIndex, rvolAt, SESSION_MINUTES, todayCurve } from './rvol.js';
+import { changePct, cvdStats, DEFAULT_FLOW_CONFIG, divergence, FlowBook, windowStats } from './orderFlow.js';
+import { buildBaseline, minuteIndex, rvolAt, SESSION_MINUTES, todayCurve, windowRvol } from './rvol.js';
 import { inMarketHours } from './time.js';
 import { sessionPriceCurves, vwapDeviationPct } from './vwapCurve.js';
 
@@ -10,6 +11,9 @@ const RSI_BARS = 14;
 const SWING_WING = 2; // a swing is the extreme of 5 candles: itself and 2 on each side
 const EMA_BARS = 20;
 const SLOPE_BARS = 5; // EMA slope % = change in the EMA over this many candles
+const RECENT_MINUTES = 15; // recent RVOL and the order-book quantity trend use 15-minute windows
+const VOLUME_TREND_PCT = 20; // recent RVOL up or down by more than this = rising / falling
+const BOOK_TREND_PCT = 10; // average book quantity up or down by more than this = increasing / reducing
 
 export class RvolEngine {
   /**
@@ -17,11 +21,16 @@ export class RvolEngine {
    * @param loadCandles  (symbol) => stored 1-minute candles
    * @param onNewDay     optional (symbol, day) => void, called when a quote arrives for a
    *                     session the baseline wasn't built for (so history can be refreshed)
+   * @param flowStore    optional { load(symbol, day, cfg), save(symbol, book) }: keeps the
+   *                     session's order-flow buckets across restarts
+   * @param flowConfig   order-flow window lengths and thresholds
    */
-  constructor({ symbols, loadCandles, lookback = 20, onNewDay = () => {} }) {
+  constructor({ symbols, loadCandles, lookback = 20, onNewDay = () => {}, flowStore = null, flowConfig = DEFAULT_FLOW_CONFIG }) {
     this.loadCandles = loadCandles;
     this.lookback = lookback;
     this.onNewDay = onNewDay;
+    this.flowStore = flowStore;
+    this.flowConfig = flowConfig;
     this.state = new Map(symbols.map((sym) => [sym, { sym, day: null, baseline: null, today: null, price: null, vwapCurve: null }]));
   }
 
@@ -34,6 +43,14 @@ export class RvolEngine {
     const stored = todayCurve(m1, s.day);
     // Keep live points that are newer than what is stored.
     s.today = stored.map((v, i) => v ?? s.today?.[i] ?? null);
+    // Recent RVOL: the last 15 minutes of completed candles against the usual volume of those
+    // same minutes, and the same 15 minutes earlier. Windows end on a 5-minute candle boundary.
+    const lastStored = stored.findLastIndex((v) => v != null);
+    const end = Math.floor((lastStored + 1) / 5) * 5;
+    s.recentRvol = windowRvol(stored, s.baseline, end, RECENT_MINUTES);
+    s.priorRvol = windowRvol(stored, s.baseline, end - RECENT_MINUTES, RECENT_MINUTES);
+    s.recentRvolCurve = new Array(SESSION_MINUTES).fill(null);
+    for (let e = RECENT_MINUTES; e <= end; e += 5) s.recentRvolCurve[e - 1] = windowRvol(stored, s.baseline, e, RECENT_MINUTES)?.rvol ?? null;
     // Previous session's high, low and close, for pivot points.
     s.prevDay = toDaily(m1.slice(-3000)).filter((k) => istDay(k.t) < s.day).at(-1) ?? null;
     // Volatility on completed 5-minute candles: true range, ATR(14), and ATR relative to the
@@ -101,11 +118,15 @@ export class RvolEngine {
       s.today = null;
       s.price = null;
       s.vwapCurve = null;
+      // Order flow for this session: carried over from disk after a restart, otherwise new.
+      s.flow = this.flowStore?.load(q.sym, day, this.flowConfig) ?? new FlowBook(this.flowConfig);
       this.reload(q.sym);
       if (!first) this.onNewDay(q.sym, day);
     }
     Object.assign(s, { ltp: q.ltp, prevClose: q.pc, volume: q.vol, vwap: q.vwap, asOf: tMs, recv: q.recv, totalBuyQty: q.tbq, totalSellQty: q.tsq });
     const idx = minuteIndex(tSec);
+    s.flow.onQuote(q);
+    if (q.tbq != null && q.tsq != null) s.flow.addBookQty(idx, q.tbq, q.tsq); // saved with the flow book
     if (idx >= 0) {
       const i = Math.min(idx, SESSION_MINUTES - 1);
       if (q.vol != null) s.today[i] = q.vol;
@@ -200,6 +221,96 @@ export class RvolEngine {
     };
   }
 
+  /** Call when the feed reconnects, so volume traded during the outage is not guessed at. */
+  markFeedGap() {
+    for (const s of this.state.values()) s.flow?.markGap();
+  }
+
+  /** Writes every stock's order-flow buckets to the store. */
+  saveFlow() {
+    if (!this.flowStore) return;
+    for (const [sym, s] of this.state) if (s.flow?.day != null) this.flowStore.save(sym, s.flow);
+  }
+
+  /**
+   * Estimated order flow (buy / sell volume shares and changes, CVD), plus two exact measures:
+   * recent RVOL from completed candles and the trend in whole-book quantity.
+   */
+  flowMetrics(s) {
+    const out = { flow: null, recentRvol: s.recentRvol?.rvol ?? null, priorRvol: s.priorRvol?.rvol ?? null, volumeTrendPct: null, volumeTrend: null, askQtyTrend: null, bidQtyTrend: null };
+    out.volumeTrendPct = changePct(s.recentRvol?.rvol, s.priorRvol?.rvol);
+    if (out.volumeTrendPct != null) out.volumeTrend = out.volumeTrendPct > VOLUME_TREND_PCT ? 'rising' : out.volumeTrendPct < -VOLUME_TREND_PCT ? 'falling' : 'steady';
+    if (!s.flow || s.asOf == null) return out;
+    const minuteNow = minuteIndex(Math.floor(s.asOf / 1000));
+
+    // Whole-book quantity: average over the last 15 completed minutes against the 15 before.
+    const end = Math.min(SESSION_MINUTES, Math.floor(Math.max(0, minuteNow) / 5) * 5);
+    const avg = (from, to, side) => {
+      let sum = 0;
+      let n = 0;
+      for (let i = Math.max(0, from); i < to; i++) {
+        const k = s.flow.bookQty[i];
+        if (k?.n) {
+          sum += k[side] / k.n;
+          n++;
+        }
+      }
+      return from >= 0 && n >= (to - from) * 0.8 ? sum / n : null; // needs most of the window sampled
+    };
+    const trend = (side) => {
+      const pct = changePct(avg(end - RECENT_MINUTES, end, side), avg(end - 2 * RECENT_MINUTES, end - RECENT_MINUTES, side));
+      return { pct, label: pct == null ? null : pct > BOOK_TREND_PCT ? 'increasing' : pct < -BOOK_TREND_PCT ? 'reducing' : 'flat' };
+    };
+    // Minutes until both windows are sampled well enough, assuming samples keep arriving from now.
+    const sampledBy = (from, to) => {
+      let n = 0;
+      for (let i = Math.max(0, from); i < to; i++) if (s.flow.bookQty[i]?.n || i >= minuteNow) n++;
+      return from >= 0 && n >= (to - from) * 0.8;
+    };
+    let bookWait = null;
+    if (minuteNow >= 0) {
+      for (let e = end; e <= SESSION_MINUTES; e += 5) {
+        if (sampledBy(e - RECENT_MINUTES, e) && sampledBy(e - 2 * RECENT_MINUTES, e - RECENT_MINUTES)) {
+          bookWait = Math.max(0, e - minuteNow);
+          break;
+        }
+      }
+    }
+    out.askQtyTrend = { ...trend('sell'), minutesUntil: bookWait };
+    out.bidQtyTrend = { ...trend('buy'), minutesUntil: bookWait };
+
+    const w = windowStats(s.flow, minuteNow, this.flowConfig);
+    const c = cvdStats(s.flow, minuteNow, this.flowConfig);
+    const st = s.flow.stats;
+    const all = st.buy + st.sell + st.unclassified;
+    out.flow = {
+      estimated: true, // classified from once-a-second snapshots, not from individual trades
+      sellShare: w.sellShare,
+      buyShare: w.buyShare,
+      dominance: w.dominance,
+      unclassifiedShare: w.unclassifiedShare,
+      sellVolume: w.recent?.sell ?? null,
+      buyVolume: w.recent?.buy ?? null,
+      sellChangePct: w.sellChangePct,
+      buyChangePct: w.buyChangePct,
+      totalChangePct: w.totalChangePct,
+      sellChange: w.sellChange,
+      buyChange: w.buyChange,
+      minutesUntilShare: w.minutesUntilShare,
+      minutesUntilChange: w.minutesUntilChange,
+      cvd: c.cvd,
+      cvdRate: c.cvdRate,
+      cvdTrend: c.cvdTrend,
+      cvdSlopeShare: c.cvdSlopeShare,
+      minutesUntilTrend: c.minutesUntilTrend,
+      coveredFromMinute: c.coveredFromMinute,
+      divergence: divergence(s.flow, s.swingLows, s.swingHighs, this.flowConfig),
+      sessionUnclassifiedShare: all ? (st.unclassified / all) * 100 : null,
+      sessionMultiTradeShare: all ? (st.multi / all) * 100 : null,
+    };
+    return out;
+  }
+
   row(sym) {
     const s = this.state.get(sym);
     return {
@@ -229,6 +340,7 @@ export class RvolEngine {
       ...this.bookMetrics(s),
       ...this.pivotMetrics(s),
       ...this.swingMetrics(s),
+      ...this.flowMetrics(s),
     };
   }
 
@@ -240,6 +352,6 @@ export class RvolEngine {
   detail(sym) {
     const s = this.state.get(sym);
     if (!s) return null;
-    return { ...this.row(sym), average: s.baseline?.curve ?? null, today: s.today ?? null, price: s.price ?? null, vwapCurve: s.vwapCurve ?? null, trCurve: s.trCurve ?? null, atrCurve: s.atrCurve ?? null, atrUsualCurve: s.atrUsualCurve ?? null, rocCurve: s.rocCurve ?? null, rsiCurve: s.rsiCurve ?? null, emaCurve: s.emaCurve ?? null, slopeCurve: s.slopeCurve ?? null };
+    return { ...this.row(sym), average: s.baseline?.curve ?? null, today: s.today ?? null, price: s.price ?? null, vwapCurve: s.vwapCurve ?? null, trCurve: s.trCurve ?? null, atrCurve: s.atrCurve ?? null, atrUsualCurve: s.atrUsualCurve ?? null, rocCurve: s.rocCurve ?? null, rsiCurve: s.rsiCurve ?? null, emaCurve: s.emaCurve ?? null, slopeCurve: s.slopeCurve ?? null, cvdCurve: s.flow?.cvdCurve() ?? null, recentRvolCurve: s.recentRvolCurve ?? null };
   }
 }

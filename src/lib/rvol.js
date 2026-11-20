@@ -60,4 +60,21 @@ export function rvolAt(baseline, volume, tSec) {
   return expected > 0 ? { rvol: volume / expected, expected } : null;
 }
 
+/**
+ * RVOL of one recent window: the volume traded in session minutes [end - minutes, end) divided
+ * by the average volume of those same minutes over the baseline sessions. Unlike day RVOL this
+ * shows what is happening now, not the whole day so far.
+ * `todayCum` is today's cumulative curve from completed candles (null after the last stored minute).
+ * Returns { volume, usual, rvol } or null when the window isn't fully available.
+ */
+export function windowRvol(todayCum, baseline, end, minutes) {
+  const start = end - minutes;
+  if (!baseline || !todayCum || start < 0 || end > SESSION_MINUTES) return null;
+  const at = (curve, i) => (i < 0 ? 0 : curve[i]); // cumulative volume at the end of minute i
+  const volume = at(todayCum, end - 1) == null || at(todayCum, start - 1) == null ? null : at(todayCum, end - 1) - at(todayCum, start - 1);
+  const usual = at(baseline.curve, end - 1) - at(baseline.curve, start - 1);
+  if (volume == null || !(usual > 0)) return null;
+  return { volume, usual, rvol: volume / usual };
+}
+
 export { minuteIndex };
