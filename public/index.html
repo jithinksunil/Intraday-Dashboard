@@ -34,7 +34,6 @@
   .risk-box { display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--text); }
   .risk-box:focus-within { border-color: var(--accent); }
   .risk input { width: 78px; border: 0; background: none; color: inherit; font: inherit; font-variant-numeric: tabular-nums; outline: none; }
-  @media (max-width: 760px) { .risk { display: none; } }
   .ladder { display: grid; gap: 6px; margin: 4px 0 18px; }
   .ladder div { display: flex; justify-content: space-between; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-variant-numeric: tabular-nums; }
   .ladder .t { border-left: 3px solid var(--up); } .ladder .e { border-left: 3px solid var(--accent); } .ladder .s { border-left: 3px solid var(--down); }
@@ -117,6 +116,8 @@
   .tile-value { font-size: 26px; font-weight: 650; letter-spacing: -0.01em; margin-top: 10px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   .tile { position: relative; }
   .info { cursor: pointer; display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; flex: none; border: 1px solid var(--muted); border-radius: 50%; font-size: 11px; font-weight: 700; font-style: italic; font-family: Georgia, serif; }
+  .info { position: relative; }
+  .info::after { content: ""; position: absolute; inset: -11px; }
   .info { transition: color .12s, border-color .12s, background .12s; }
   .info:hover, .info.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
   #tooltip { position: fixed; z-index: 20; width: max-content; max-width: min(360px, calc(100vw - 24px)); padding: 12px 14px 13px; border: 1px solid var(--line); border-top: 2px solid var(--accent); border-radius: 10px; background: var(--tip-bg); color: var(--text); box-shadow: 0 12px 32px rgba(0, 0, 0, .35), 0 2px 6px rgba(0, 0, 0, .2); pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; visibility: hidden; }
@@ -159,6 +160,63 @@
   .metric .hero { margin-top: 20px; }
   .note { color: var(--muted); font-size: 12px; margin-top: 14px; }
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  /* ---------- phones and narrow windows ---------- */
+  @media (max-width: 760px) {
+    header { flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; }
+    #toggle { display: none; }
+    .head-right { width: 100%; justify-content: space-between; gap: 10px; }
+    .risk { font-size: 12px; gap: 6px; flex: none; }
+    .risk input { width: 64px; font-size: 16px; } /* 16px stops iOS zooming in on focus */
+    #status { min-width: 0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #status::before { flex: none; }
+    main, main.closed { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 10px; }
+    /* The stock list becomes a swipeable strip that stays at the top while scrolling. */
+    main.closed nav { display: block; }
+    nav.panel { position: sticky; top: 0; z-index: 4; border-radius: 10px; box-shadow: 0 6px 14px rgba(0, 0, 0, .18); }
+    #list { display: flex; gap: 6px; padding: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    #list::-webkit-scrollbar { display: none; }
+    #list li { flex: none; }
+    #list button { grid-template-columns: auto auto; gap: 1px 10px; padding: 7px 11px; min-width: 112px; }
+    #list button > :first-child { grid-column: 1 / -1; }
+    #list button > :first-child br { display: none; }
+    #list button > :first-child .name { margin-right: 6px; }
+    #list button[aria-current="true"] { box-shadow: inset 0 -3px 0 var(--accent); }
+    .pill { min-width: 0; }
+    #detail { padding: 14px 12px; min-height: 0; }
+    #detail h2 { font-size: 18px; }
+    .back { padding: 6px 0; margin-bottom: 6px; }
+    .jump { flex-wrap: nowrap; overflow-x: auto; margin: 12px -12px 0; padding: 0 12px 4px; scrollbar-width: none; }
+    .jump::-webkit-scrollbar { display: none; }
+    .jump a { flex: none; white-space: nowrap; padding: 7px 12px; font-size: 13px; }
+    .group { margin-top: 18px; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .tile { padding: 11px 12px; }
+    .tile-title { gap: 6px; }
+    .tile-value { font-size: 20px; margin-top: 8px; }
+    .tile-label { font-size: 11px; }
+    .tile-rating { margin-top: 8px; }
+    .badge { font-size: 11px; padding: 2px 7px; }
+    .hero { flex-wrap: wrap; gap: 4px 10px; margin: 16px 0 4px; }
+    .hero .big { font-size: 38px; }
+    .metric .hero { margin-top: 16px; }
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+    .stat { padding: 9px 10px; }
+    .stat .v { font-size: 15px; overflow-wrap: anywhere; }
+    .chart-head { flex-wrap: wrap; gap: 4px 12px; }
+    .legend { flex-wrap: wrap; gap: 4px 12px; }
+    .ladder div { gap: 10px; align-items: baseline; }
+    .ladder .sub { display: block; }
+    table.book, table.levels { font-size: 13px; }
+    table.book th, table.book td, table.levels th, table.levels td { padding: 6px 5px; }
+    /* Order counts are dropped on a phone so price and quantity fit. */
+    table.book tr > :first-child, table.book tr > :last-child { display: none; }
+    table.levels .sub { display: block; }
+    #tooltip { max-width: calc(100vw - 20px); }
+    /* No double-tap zoom delay and no grey flash on tappable things. */
+    #list button, .tile, .jump a, .back, .group-title a, .info { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    #list { touch-action: pan-x; }
+  }
+  @media (max-width: 360px) { .tiles { grid-template-columns: minmax(0, 1fr); } }
 </style>
 </head>
 <body>
@@ -241,7 +299,8 @@ let drawCharts = true;
 function chartSvg(lines, { fromZero, format, label, range, guides = [] }) {
   if (!drawCharts) return '';
   // Drawn at the panel's real pixel width so a wide page gives a wider chart, not a taller one.
-  const W = Math.max(360, $('detail').clientWidth - 44), H = 240, L = 58, R = 10, T = 10, B = 24, N = 375;
+  const pad = parseFloat(getComputedStyle($('detail')).paddingLeft) || 0;
+  const W = Math.max(280, $('detail').clientWidth - 2 * pad), H = 240, L = 58, R = 10, T = 10, B = 24, N = 375;
   const vals = lines.flatMap((l) => (l.data ?? []).filter((v) => v != null));
   if (!vals.length) return '<p class="empty">No data for this session yet.</p>';
   let min = fromZero ? 0 : Math.min(...vals), max = Math.max(...vals);
@@ -277,7 +336,7 @@ const qty = new Intl.NumberFormat('en-IN');
 function imbalanceVerdict(v, live) {
   if (v == null) return 'No order book received yet.';
   const buy = ((1 + v) / 2) * 100;
-  const lead = Math.abs(v) < 0.1 ? 'Buy and sell quantity in the top 5 levels are roughly balanced' : `${buy >= 50 ? 'Buyers' : 'Sellers'} hold ${Math.max(buy, 100 - buy).toFixed(0)}% of the quantity in the top 5 levels`;
+  const lead = v === 0 ? 'Buy and sell quantity in the top 5 levels are exactly balanced' : `${buy >= 50 ? 'Buyers' : 'Sellers'} hold ${Math.max(buy, 100 - buy).toFixed(0)}% of the quantity in the top 5 levels`;
   return lead + (live ? '.' : '. The market is closed, so this is the leftover book, not live interest.');
 }
 function bookTable(book) {
@@ -758,6 +817,50 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
 window.addEventListener('scroll', hideTip, { passive: true });
 window.addEventListener('resize', hideTip);
+
+// ---------- touch only (phones and tablets); mouse clicks never run this ----------
+// The panel is redrawn on every quote. On a touch screen the browser sends the click a moment
+// after the finger lifts, aimed at the element that was first touched; by then a redraw has
+// usually replaced that element, so the tap is lost (or, on iOS, treated as a hover). So a
+// finger tap is handled here directly: find what is under the finger now and act on it.
+let touchStart = null;
+let suppressClickUntil = 0;
+function handleTap(el) {
+  if (!el) return false;
+  const icon = el.closest('.info');
+  if (icon) {
+    if (tipFor === Number(icon.dataset.n)) hideTip(); else showTip(icon);
+    schedule();
+    return true;
+  }
+  const stock = el.closest('#list button[data-sym]');
+  if (stock) { hideTip(); select(stock.dataset.sym); return true; }
+  const link = el.closest('#detail a[href^="#"]');
+  if (link) {
+    hideTip();
+    const target = link.getAttribute('href');
+    if (location.hash !== target && !(target === '#' && !location.hash)) location.hash = target; // fires hashchange
+    return true;
+  }
+  hideTip();
+  return false; // inputs and everything else behave normally
+}
+window.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') touchStart = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now() };
+}, true);
+window.addEventListener('pointercancel', () => { touchStart = null; }, true); // the touch became a scroll
+window.addEventListener('pointerup', (e) => {
+  if (e.pointerType !== 'touch' || !touchStart || e.pointerId !== touchStart.id) return;
+  const moved = Math.hypot(e.clientX - touchStart.x, e.clientY - touchStart.y);
+  const held = performance.now() - touchStart.t;
+  touchStart = null;
+  if (moved > 10 || held > 600) return; // a swipe or a long press, not a tap
+  if (handleTap(document.elementFromPoint(e.clientX, e.clientY))) suppressClickUntil = performance.now() + 700;
+}, true);
+// The browser's own follow-up click for a tap we already handled is dropped, so nothing fires twice.
+document.addEventListener('click', (e) => {
+  if (performance.now() < suppressClickUntil) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
 
 // Redraws replace the elements under the pointer; one landing between press and release would
 // swallow the click. So drawing waits while a mouse button or finger is down.
