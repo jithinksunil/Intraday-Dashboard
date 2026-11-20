@@ -340,7 +340,7 @@ function vwapVerdict(dev) {
 }
 
 // Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
-const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-trend', 'Trend'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance']];
+const SECTIONS = [['s-book', 'Order book'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance']];
 const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
 let view = viewFromHash(); // null = tile overview, otherwise the id of the section being shown
 
