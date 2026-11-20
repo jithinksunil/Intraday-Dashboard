@@ -77,4 +77,51 @@ export function windowRvol(todayCum, baseline, end, minutes) {
   return { volume, usual, rvol: volume / usual };
 }
 
+/**
+ * Cumulative volume `t` minutes after the open, read from a per-minute curve where curve[k] is
+ * the total at the end of minute k. Interpolated inside a minute. `fromZero`: the curve starts
+ * from 0 at the open (candle totals do; the feed's running total may not). `maxGap`: how many
+ * missing minutes may be bridged on each side. Null when the curve doesn't reach that moment.
+ */
+export function cumulativeAt(curve, t, { fromZero = false, maxGap = 0 } = {}) {
+  if (!curve || !(t >= 0) || t > SESSION_MINUTES) return null;
+  const at = (time) => (time === 0 ? (fromZero ? 0 : null) : (curve[time - 1] ?? null)); // total at a whole minute
+  let lo = Math.floor(t);
+  let hi = Math.ceil(t);
+  for (let n = 0; at(lo) == null && lo > 0 && n < maxGap; n++) lo--;
+  for (let n = 0; at(hi) == null && hi < SESSION_MINUTES && n < maxGap; n++) hi++;
+  const a = at(lo);
+  const b = at(hi);
+  if (a == null || b == null) return null;
+  return hi === lo ? a : a + ((t - lo) / (hi - lo)) * (b - a);
+}
+
+/**
+ * Volume traded between `from` and `to` (minutes after the open), using the live feed where it
+ * has been watching and stored candles before that.
+ *   live:   the feed's running day total at the end of each minute (null where not watched)
+ *   stored: cumulative volume from completed candles (null after the last stored minute)
+ *   liveNow: { t, volume } the feed's total at the current moment, if `to` is now
+ * The feed's total and the candle total differ by a constant (pre-open and block trades are in
+ * one and not the other), so the two are never subtracted from each other directly: each side is
+ * measured within one source, joined at a minute both sources cover.
+ */
+export function volumeBetween(live, stored, from, to, liveNow = null) {
+  if (!(to > from)) return null;
+  const liveAt = (t) => (liveNow && t === liveNow.t ? liveNow.volume : cumulativeAt(live, t, { maxGap: 3 }));
+  const storedAt = (t) => cumulativeAt(stored, t, { fromZero: true });
+  const lb = liveAt(to);
+  const la = liveAt(from);
+  if (la != null && lb != null) return lb - la;
+  const sa = storedAt(from);
+  const sb = storedAt(to);
+  if (sa != null && sb != null) return sb - sa;
+  if (lb == null || sa == null || !live || !stored) return null;
+  // Older part from candles, newer part from the feed, joined at the latest minute both have.
+  for (let j = Math.min(SESSION_MINUTES, Math.floor(to)) - 1; j + 1 >= from && j >= 0; j--) {
+    if (live[j] != null && stored[j] != null) return lb - live[j] + (stored[j] - sa);
+  }
+  return null;
+}
+
 export { minuteIndex };

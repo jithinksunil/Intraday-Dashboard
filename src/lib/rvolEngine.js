@@ -1,8 +1,8 @@
 // Holds the live state behind the dashboard: latest quote per symbol, the RVOL baseline, and
 // today's per-minute curves (cumulative volume, price, VWAP). Fed with normalized quote records; no I/O of its own.
-import { atr, ema, istDay, last, pctChange, pivots, relativeAtrByTime, resample, roc, rsi, swings, toDaily, trueRanges } from './indicators.js';
+import { atr, ema, istDay, istSecOfDay, last, pctChange, pivots, relativeAtrByTime, resample, roc, rsi, swings, SESSION_OPEN_S, toDaily, trueRanges } from './indicators.js';
 import { changePct, cvdStats, DEFAULT_FLOW_CONFIG, divergence, FlowBook, windowStats } from './orderFlow.js';
-import { buildBaseline, minuteIndex, rvolAt, SESSION_MINUTES, todayCurve, windowRvol } from './rvol.js';
+import { buildBaseline, expectedVolume, minuteIndex, rvolAt, SESSION_MINUTES, todayCurve, volumeBetween, windowRvol } from './rvol.js';
 import { inMarketHours } from './time.js';
 import { sessionPriceCurves, vwapDeviationPct } from './vwapCurve.js';
 
@@ -43,8 +43,11 @@ export class RvolEngine {
     const stored = todayCurve(m1, s.day);
     // Keep live points that are newer than what is stored.
     s.today = stored.map((v, i) => v ?? s.today?.[i] ?? null);
-    // Recent RVOL: the last 15 minutes of completed candles against the usual volume of those
-    // same minutes, and the same 15 minutes earlier. Windows end on a 5-minute candle boundary.
+    s.stored = stored; // candle totals only, for windows that join candles to the live feed
+    // Recent RVOL from completed candles: the last 15 minutes against the usual volume of those
+    // same minutes, and the same 15 minutes earlier, ending on a 5-minute boundary. During the
+    // session the live windows in volumeWindows() replace these; they remain the fallback and
+    // the values shown after the close.
     const lastStored = stored.findLastIndex((v) => v != null);
     const end = Math.floor((lastStored + 1) / 5) * 5;
     s.recentRvol = windowRvol(stored, s.baseline, end, RECENT_MINUTES);
@@ -116,6 +119,7 @@ export class RvolEngine {
       const first = s.day == null;
       s.day = day;
       s.today = null;
+      s.liveCum = new Array(SESSION_MINUTES).fill(null); // the feed's running day volume at the end of each minute
       s.price = null;
       s.vwapCurve = null;
       // Order flow for this session: carried over from disk after a restart, otherwise new.
@@ -130,6 +134,7 @@ export class RvolEngine {
     if (idx >= 0) {
       const i = Math.min(idx, SESSION_MINUTES - 1);
       if (q.vol != null) s.today[i] = q.vol;
+      if (q.vol != null && idx < SESSION_MINUTES) s.liveCum[idx] = q.vol;
       if (q.ltp != null) s.price[i] = q.ltp;
       // The feed's VWAP is the exchange's own session VWAP, so it replaces the candle estimate.
       if (q.vwap) s.vwapCurve[i] = q.vwap;
@@ -221,6 +226,33 @@ export class RvolEngine {
     };
   }
 
+  /**
+   * Volume and RVOL of the 15 minutes ending now, and of the 15 minutes before, recalculated on
+   * every quote. The newest part comes from the feed's running volume and the older part from
+   * stored candles, so it is available soon after a restart. Until the two sources overlap (a
+   * few minutes after start), before 09:30 / 09:45, and after the close, the values from
+   * completed candles are used instead (`live: false`).
+   */
+  volumeWindows(s) {
+    const candles = { recent: s.recentRvol ?? null, prior: s.priorRvol ?? null, live: false };
+    if (s.asOf == null || !s.baseline || s.volume == null) return candles;
+    const tSec = s.asOf / 1000;
+    const now = (istSecOfDay(tSec) - SESSION_OPEN_S) / 60; // minutes after the open
+    if (!(now > 0) || now >= SESSION_MINUTES) return candles;
+    const window = (from, to) => {
+      if (from < 0) return null;
+      const volume = volumeBetween(s.liveCum, s.stored, from, to, { t: now, volume: s.volume });
+      const usual = expectedVolume(s.baseline, tSec - (now - to) * 60) - (expectedVolume(s.baseline, tSec - (now - from) * 60) ?? 0);
+      return volume == null || volume < 0 || !(usual > 0) ? null : { volume, usual, rvol: volume / usual };
+    };
+    const recent = window(now - RECENT_MINUTES, now);
+    if (!recent) return candles;
+    // The earlier window is only shown live as well; otherwise the pair would cover different times.
+    const prior = window(now - 2 * RECENT_MINUTES, now - RECENT_MINUTES);
+    if (!prior && candles.prior && now >= 2 * RECENT_MINUTES) return candles;
+    return { recent, prior, live: true };
+  }
+
   /** Call when the feed reconnects, so volume traded during the outage is not guessed at. */
   markFeedGap() {
     for (const s of this.state.values()) s.flow?.markGap();
@@ -237,50 +269,60 @@ export class RvolEngine {
    * recent RVOL from completed candles and the trend in whole-book quantity.
    */
   flowMetrics(s) {
-    const out = { flow: null, recentRvol: s.recentRvol?.rvol ?? null, priorRvol: s.priorRvol?.rvol ?? null, volumeTrendPct: null, volumeTrend: null, askQtyTrend: null, bidQtyTrend: null };
-    out.volumeTrendPct = changePct(s.recentRvol?.rvol, s.priorRvol?.rvol);
+    const vw = this.volumeWindows(s);
+    const out = { flow: null, recentRvol: vw.recent?.rvol ?? null, priorRvol: vw.prior?.rvol ?? null, volumeTrendPct: null, volumeTrend: null, recentVolume: vw.recent?.volume ?? null, priorVolume: vw.prior?.volume ?? null, volumeWindowsLive: vw.live, rawVolumeTrendPct: null, askQtyTrend: null, bidQtyTrend: null };
+    out.volumeTrendPct = changePct(vw.recent?.rvol, vw.prior?.rvol);
+    // The same two windows without the time-of-day adjustment: shares traded, last 15 minutes against the 15 before.
+    out.rawVolumeTrendPct = changePct(vw.recent?.volume, vw.prior?.volume);
     if (out.volumeTrendPct != null) out.volumeTrend = out.volumeTrendPct > VOLUME_TREND_PCT ? 'rising' : out.volumeTrendPct < -VOLUME_TREND_PCT ? 'falling' : 'steady';
     if (!s.flow || s.asOf == null) return out;
     const minuteNow = minuteIndex(Math.floor(s.asOf / 1000));
 
-    // Whole-book quantity: average over the last 15 completed minutes against the 15 before.
-    const end = Math.min(SESSION_MINUTES, Math.floor(Math.max(0, minuteNow) / 5) * 5);
-    const avg = (from, to, side) => {
+    // Whole-book quantity: the average of every reading in the 15 minutes ending now, against the
+    // 15 minutes before that. Recalculated on each quote. Readings are stored per minute, so the
+    // minute at each window's old edge is weighted by how much of it still falls inside the window.
+    const m = Math.min(minuteNow, SESSION_MINUTES - 1); // the minute in progress (the last one, after the close)
+    const part = minuteNow > m ? 1 : ((s.asOf / 1000) % 60) / 60; // share of minute m that has elapsed
+    const MIN_SAMPLED = Math.ceil(RECENT_MINUTES * 0.8); // minutes of a window that must have readings
+    const sampled = (last, now) => {
+      // minutes last-14 .. last with a reading; minutes from `now` on are assumed to get one
+      let n = 0;
+      for (let i = last - RECENT_MINUTES + 1; i <= last; i++) if (i >= 0 && (s.flow.bookQty[i]?.n || (now != null && i >= now))) n++;
+      return n;
+    };
+    const ready = (at, now) => at - 2 * RECENT_MINUTES + 1 >= 0 && sampled(at, now) >= MIN_SAMPLED && sampled(at - RECENT_MINUTES, now) >= MIN_SAMPLED;
+    const avg = (last, side) => {
+      // window: the elapsed part of minute `last`, the 14 whole minutes before it, and the rest of minute last-15
       let sum = 0;
       let n = 0;
-      for (let i = Math.max(0, from); i < to; i++) {
-        const k = s.flow.bookQty[i];
-        if (k?.n) {
-          sum += k[side] / k.n;
-          n++;
-        }
+      for (let i = last - RECENT_MINUTES; i <= last; i++) {
+        const k = i >= 0 ? s.flow.bookQty[i] : null;
+        if (!k?.n) continue;
+        const w = i === last - RECENT_MINUTES ? 1 - part : i === last && last !== m ? part : 1;
+        sum += w * k[side];
+        n += w * k.n;
       }
-      return from >= 0 && n >= (to - from) * 0.8 ? sum / n : null; // needs most of the window sampled
+      return n > 0 ? sum / n : null;
     };
+    const live = m >= 0 && ready(m, null);
     const trend = (side) => {
-      const pct = changePct(avg(end - RECENT_MINUTES, end, side), avg(end - 2 * RECENT_MINUTES, end - RECENT_MINUTES, side));
+      const pct = live ? changePct(avg(m, side), avg(m - RECENT_MINUTES, side)) : null;
       return { pct, label: pct == null ? null : pct > BOOK_TREND_PCT ? 'increasing' : pct < -BOOK_TREND_PCT ? 'reducing' : 'flat' };
     };
-    // Minutes until both windows are sampled well enough, assuming samples keep arriving from now.
-    const sampledBy = (from, to) => {
-      let n = 0;
-      for (let i = Math.max(0, from); i < to; i++) if (s.flow.bookQty[i]?.n || i >= minuteNow) n++;
-      return from >= 0 && n >= (to - from) * 0.8;
-    };
+    // Minutes until both windows have enough readings, assuming they keep arriving from now.
     let bookWait = null;
-    if (minuteNow >= 0) {
-      for (let e = end; e <= SESSION_MINUTES; e += 5) {
-        if (sampledBy(e - RECENT_MINUTES, e) && sampledBy(e - 2 * RECENT_MINUTES, e - RECENT_MINUTES)) {
-          bookWait = Math.max(0, e - minuteNow);
-          break;
-        }
+    for (let at = Math.max(0, m); at < SESSION_MINUTES && minuteNow >= 0; at++) {
+      if (ready(at, m)) {
+        bookWait = at - m;
+        break;
       }
     }
     out.askQtyTrend = { ...trend('sell'), minutesUntil: bookWait };
     out.bidQtyTrend = { ...trend('buy'), minutesUntil: bookWait };
 
-    const w = windowStats(s.flow, minuteNow, this.flowConfig);
-    const c = cvdStats(s.flow, minuteNow, this.flowConfig);
+    // Windows end at the current moment, so shares, changes and the CVD trend move with every quote.
+    const w = windowStats(s.flow, minuteNow, this.flowConfig, part);
+    const c = cvdStats(s.flow, minuteNow, this.flowConfig, part);
     const st = s.flow.stats;
     const all = st.buy + st.sell + st.unclassified;
     out.flow = {

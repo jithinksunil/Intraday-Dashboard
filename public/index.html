@@ -639,6 +639,8 @@ function cvdRating(f) {
   if (f.cvdTrend === 'sideways') return { grade: 'neutral', label: 'Balanced order flow →' };
   return null;
 }
+// Shares traded in the two windows; a server started before this value existed doesn't send it.
+const rawVolumeText = (r) => (r.rawVolumeTrendPct == null ? (r.rawVolumeTrendPct === undefined && r.volumeTrendPct != null ? 'restart the server to show this' : 'needs 30 min of today\'s candles') : `${compact.format(r.recentVolume)} vs ${compact.format(r.priorVolume)} shares · not adjusted for time of day`);
 const volumeTrendRating = (t) => (t === 'rising' ? { grade: 'verygood', label: 'Volume rising ↑' } : t === 'falling' ? { grade: 'average', label: 'Volume falling ↓' } : t === 'steady' ? { grade: 'neutral', label: 'Volume steady →' } : null);
 function bookQtyRating(side, t) {
   if (!t?.label) return null;
@@ -735,7 +737,7 @@ function renderDetail() {
         <li>Price falling while CVD rises: potential bullish divergence.</li>
         <li>Price rising, buy volume increasing, CVD rising: bullish pressure strengthening.</li>
       </ul>
-      <p class="note"><b>These are estimates.</b> The Fyers feed has no trade-by-trade data. It sends a snapshot about once a second, so the volume traded between two snapshots gets one label: buying if the last price is at or above the previous ask (or above the midpoint), selling if at or below the previous bid (or below the midpoint), otherwise by the direction of the price change. Volume that can't be labelled is kept as unclassified. Windows are completed 5-minute candles: the last three against the three before. CVD = running total of buy − sell volume; it resets each session and only covers the time this server was running. CVD trend is the slope of CVD over the last 30 minutes relative to average volume. A divergence is flagged only when two confirmed price swings and CVD disagree. Nothing here places or suggests a trade.</p>
+      <p class="note"><b>These are estimates.</b> The Fyers feed has no trade-by-trade data. It sends a snapshot about once a second, so the volume traded between two snapshots gets one label: buying if the last price is at or above the previous ask (or above the midpoint), selling if at or below the previous bid (or below the midpoint), otherwise by the direction of the price change. Volume that can't be labelled is kept as unclassified. Windows end at the current moment and are recalculated on every quote: the 15 minutes ending now against the 15 minutes before. CVD = running total of buy − sell volume; it resets each session and only covers the time this server was running. CVD trend is the slope of CVD over the last 30 minutes relative to average volume. A divergence is flagged only when two confirmed price swings and CVD disagree. Nothing here places or suggests a trade.</p>
     </div>
 
     <div class="metric" id="s-volume">
@@ -744,7 +746,8 @@ function renderDetail() {
     <div class="stats">
       <div class="stat"><div class="k">Volume ${stale ? 'for the day' : 'so far today'}</div><div class="v num">${fmt(compact, r.volume)}</div></div>
       <div class="stat"><div class="k">Recent RVOL (last 15 min)</div><div class="v num">${fmtRvol(r.recentRvol)} ${badge(rate('rvol', r.recentRvol))}</div><div class="k">${r.recentRvol == null ? 'needs 15 minutes of today\'s candles' : 'the last 15 minutes against the usual for those minutes'}</div></div>
-      <div class="stat"><div class="k">Volume trend</div><div class="v num">${pct(r.volumeTrendPct, 0)}</div><div class="k">${r.volumeTrendPct == null ? 'needs 30 minutes of today\'s candles' : badge(volumeTrendRating(r.volumeTrend)) + ' recent RVOL was ' + fmtRvol(r.priorRvol) + ' 15 min earlier'}</div></div>
+      <div class="stat"><div class="k">RVOL volume trend</div><div class="v num">${pct(r.volumeTrendPct, 0)}</div><div class="k">${r.volumeTrendPct == null ? 'needs 30 minutes of today\'s candles' : badge(volumeTrendRating(r.volumeTrend)) + ' recent RVOL was ' + fmtRvol(r.priorRvol) + ' 15 min earlier'}</div></div>
+      <div class="stat"><div class="k">Raw volume trend</div><div class="v num">${pct(r.rawVolumeTrendPct, 0)}</div><div class="k">${rawVolumeText(r)}</div></div>
       <div class="stat"><div class="k">RVOL scale</div><div class="v num" style="font-size:14px">0 ← quieter · <b>1× = usual</b> · busier →</div><div class="k">never below 0 · no upper limit</div></div>
       <div class="stat"><div class="k">Usual volume by this time</div><div class="v num">${fmt(compact, r.expected)}</div></div>
       <div class="stat"><div class="k">Compared against</div><div class="v num">${r.baselineSessions ? 'last ' + r.baselineSessions + ' sessions' : '–'}</div></div>
@@ -755,7 +758,7 @@ function renderDetail() {
     ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
     <div class="chart-head" style="margin-top:18px"><h3>Recent RVOL through the session (15-minute windows)</h3><div class="legend"><span>Recent RVOL</span></div></div>
     ${c ? chartSvg([{ data: c.recentRvolCurve, cls: 'l-today' }], { fromZero: true, guides: [{ v: 1, label: '1× usual' }], format: (v) => v.toFixed(1) + '×', label: 'RVOL of each 15-minute window through the session, with 1 marked' }) : '<p class="empty">Loading chart…</p>'}
-    <p class="note">Day RVOL is cumulative, so it stays high after an active morning. Recent RVOL looks only at the last 15 minutes against the usual volume of those same minutes, so it shows whether activity is there now. Volume trend compares it with the 15 minutes before: rising above +20%, falling below −20%. Both use completed candles and refresh every 5 minutes.</p>
+    <p class="note">Day RVOL is cumulative, so it stays high after an active morning. Recent RVOL looks only at the last 15 minutes against the usual volume of those same minutes, so it shows whether activity is there now. RVOL volume trend compares it with the 15 minutes before: rising above +20%, falling below −20%. Raw volume trend compares the shares actually traded in the same two windows, with no adjustment for the time of day, so it is usually negative in the morning and positive late in the afternoon; it has no tag for that reason. During the session all three are recalculated on every quote, for the 15 minutes ending at the current moment: the newest minutes come from the live feed and the older ones from stored candles. For the first few minutes after a server start, and after the close, they use completed candles only.</p>
     <p class="note">RVOL = volume so far ÷ average volume by the same time of day. 1× is the base: exactly the usual volume. Below 1 means quieter than usual, above 1 means busier. It can never go below 0, because volume can't be negative. Ratings: under 1 below normal · 1–1.5 slightly above normal · 1.5–2 good · 2–3 very good · 3 and above excellent.</p>
     </div>
 
@@ -841,7 +844,7 @@ function renderDetail() {
       </div>
       <div class="chart-head"><h3>Order book depth (best 5 levels each side)</h3></div>
       ${bookTable(r.book)}
-      <p class="note">Ask and bid quantity trend: the average sell and buy quantity across the whole book over the last 15 minutes, against the 15 minutes before (increasing above +10%, reducing below −10%). It needs 30 minutes of live data and restarts when the server restarts.</p>
+      <p class="note">Ask and bid quantity trend: the average sell and buy quantity across the whole book over the 15 minutes ending now, against the 15 minutes before (increasing above +10%, reducing below −10%). It is recalculated on every quote, needs 30 minutes of live data, and carries on after a short server restart.</p>
       <p class="note">Spread % = (best ask − best bid) ÷ their midpoint: the cost of crossing the book. 0 is the base: no gap between buyers and sellers. It can never go below 0 and has no fixed upper limit, but it is usually under 0.2%. Anything above 0.1% is rated bad and not considered for a trade. Imbalance = (buy quantity − sell quantity) ÷ (buy + sell), from −1 (all sellers) to +1 (all buyers). "Whole book" uses the exchange's total buy and sell quantity across every level. Displayed orders can be cancelled at any time, so treat imbalance as a hint, not proof of buying or selling.</p>
     </div>
 
@@ -917,7 +920,8 @@ function renderDetail() {
     ['s-flow', 'CVD trend', f?.cvdTrend ? f.cvdTrend[0].toUpperCase() + f.cvdTrend.slice(1) : '–', f?.cvdTrend === 'rising' ? 'up' : f?.cvdTrend === 'falling' ? 'down' : '', f?.cvdTrend == null ? waitText(f?.minutesUntilTrend) : `slope over 30 min · ${EST}`, `CVD trend = slope of CVD over the last 6 five-minute candles ÷ average candle volume`, cvdRating(f)],
     ['s-volume', 'RVOL', fmtRvol(r.rvol), '', r.rvol == null ? 'starts at 09:15 IST' : 'base 1× = usual · below 1 quieter · above 1 busier · never below 0', `RVOL = volume so far today ÷ average volume by the same time of day over the last 20 sessions`, rate('rvol', r.rvol)],
     ['s-volume', 'Recent RVOL', fmtRvol(r.recentRvol), '', r.recentRvol == null ? 'needs 15 min of today\'s candles' : 'last 15 min vs usual for those minutes', `Recent RVOL = volume of the last 15 minutes ÷ average volume of the same 15 minutes over the last 20 sessions`, rate('rvol', r.recentRvol)],
-    ['s-volume', 'Volume trend', pct(r.volumeTrendPct, 0), '', r.volumeTrendPct == null ? 'needs 30 min of today\'s candles' : 'recent RVOL vs 15 min earlier', `Volume trend % = (recent RVOL − RVOL of the previous 15 minutes) ÷ RVOL of the previous 15 minutes × 100`, volumeTrendRating(r.volumeTrend)],
+    ['s-volume', 'RVOL volume trend', pct(r.volumeTrendPct, 0), '', r.volumeTrendPct == null ? 'needs 30 min of today\'s candles' : 'recent RVOL vs 15 min earlier', `RVOL volume trend % = (recent RVOL − RVOL of the previous 15 minutes) ÷ RVOL of the previous 15 minutes × 100`, volumeTrendRating(r.volumeTrend)],
+    ['s-volume', 'Raw volume trend', pct(r.rawVolumeTrendPct, 0), '', rawVolumeText(r), `Raw volume trend % = (volume of the last 15 minutes − volume of the previous 15 minutes) ÷ volume of the previous 15 minutes × 100`],
     ['s-vwap', 'VWAP', rupee(r.vwap), '', 'average price traded today', `VWAP = Σ(price × volume) ÷ Σ(volume) for today's trades (taken from the exchange feed)`],
     ['s-vwap', 'VWAP deviation', pct(r.vwapDevPct), tone(r.vwapDevPct), r.vwap == null ? '' : signed(r.ltp - r.vwap) + ' ₹ from VWAP', `VWAP deviation % = (last price − VWAP) ÷ VWAP × 100`],
     ['s-vwap', 'Normalized VWAP deviation', fmtAtr(r.vwapDevAtr), tone(r.vwapDevAtr), 'base 0 = at VWAP · &lt; 0 below VWAP · &gt; 0 above VWAP', `Normalized VWAP deviation = (last price − VWAP) ÷ ATR(14) on 5-minute candles`, rateVwapDev(r.vwapDevAtr)],
@@ -1163,16 +1167,17 @@ const GUIDE = {
     ],
     use: [
       'RVOL: compare the whole day with the last 15 minutes.',
-      'Volume trend: is this level building or fading?',
+      'RVOL volume trend: is this level building or fading?',
       'A breakout of a swing or pivot level is more believable when Recent RVOL is high.',
     ],
     mind: [
-      'Updates every 5 minutes, when new candles arrive.',
-      'Exact, taken from stored candles, not an estimate.',
+      'Recalculated on every quote during the session, for the 15 minutes ending now.',
+      'Exact, from the feed\'s traded volume and stored candles, not an estimate.',
+      'For the first few minutes after a server start it uses completed candles only, so it can be up to 5 minutes behind.',
     ],
   },
-  'Volume trend': {
-    what: 'Whether activity is building or fading. It compares Recent RVOL now with Recent RVOL 15 minutes earlier.',
+  'RVOL volume trend': {
+    what: 'Whether activity is building or fading, with the time of day removed. It compares Recent RVOL now with Recent RVOL 15 minutes earlier.',
     read: [
       ['Above +20%', 'Volume rising. Interest is building; moves are more likely to follow through.'],
       ['−20% to +20%', 'Volume steady. Activity is holding at its current level.'],
@@ -1181,10 +1186,33 @@ const GUIDE = {
     use: [
       'Recent RVOL: "rising" from a very low level is still a quiet stock.',
       'Price: a move on rising volume is stronger than the same move on falling volume.',
+      'Raw volume trend: the same comparison on shares actually traded, without the time-of-day adjustment.',
     ],
     mind: [
       'Both readings are already measured against the usual volume for their own time of day, so the normal midday slowdown does not show as "falling".',
-      'Needs 30 minutes of today\'s candles. Updates every 5 minutes.',
+      'Recalculated on every quote during the session. Available from 09:45, once two 15-minute windows exist.',
+    ],
+  },
+  'Raw volume trend': {
+    what: 'Whether the actual number of shares traded is going up or down: the volume of the last 15 minutes compared with the volume of the 15 minutes before. Nothing is adjusted for the time of day.',
+    read: [
+      ['Positive', 'More shares traded in the last 15 minutes than in the 15 before.'],
+      ['Negative', 'Fewer shares traded in the last 15 minutes than in the 15 before.'],
+      ['Close to 0', 'About the same amount of trading.'],
+      ['Raw falling, RVOL volume trend steady or rising', 'The drop is only the normal slowdown for this time of day. Interest in the stock has not faded.'],
+      ['Raw falling, RVOL volume trend falling', 'Interest in this stock is really fading.'],
+      ['Raw rising, RVOL volume trend steady', 'The rise is only the normal pick-up for this time of day, usually after 14:30.'],
+      ['Raw rising, RVOL volume trend rising', 'Activity is truly building in this stock.'],
+    ],
+    use: [
+      'RVOL volume trend: the same comparison with the time of day removed. Read the two as a pair.',
+      'Sell and Buy volume change: those are raw too, so this is the right yardstick for them. A side that falls less than the raw volume is gaining ground.',
+      'Spread % and position size: what you can actually buy or sell depends on real volume, not on volume relative to normal.',
+    ],
+    mind: [
+      'Every stock trades heavily after the open, quietly through midday and heavily again into the close. So this is negative most mornings and positive most late afternoons, whatever the stock is doing.',
+      'For that reason it has no rising or falling tag. Use RVOL volume trend for the verdict.',
+      'Exact, not an estimate. Recalculated on every quote during the session, and available from 09:45.',
     ],
   },
   'VWAP': {

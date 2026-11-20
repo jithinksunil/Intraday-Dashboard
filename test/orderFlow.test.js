@@ -165,6 +165,69 @@ test('sell and buy volume share over the last three completed candles', () => {
   assert.equal(w.dominance, 'strong selling dominance');
 });
 
+// ---------- windows that end at the current moment (values move with every quote) ----------
+test('moving window: the share follows the last 15 minutes instead of waiting for a candle to close', () => {
+  const book = new FlowBook();
+  const v = feed(book, '2026-11-20', 0, 30, { sellPct: 75 });
+  feed(book, '2026-11-20', 30, 33, { sellPct: 0, startVol: v }); // three minutes of pure buying
+  assert.equal(windowStats(book, 32).sellShare, 75, 'completed candles: still the 09:30-09:45 window');
+  // at the end of minute 32 the window is minutes 18-32: 12 minutes at 75% sell, 3 at 0%
+  const w = windowStats(book, 32, CFG, 1);
+  assert.equal(w.recent.total, 15 * 600);
+  assert.equal(w.sellShare, 60);
+  assert.equal(w.dominance, 'moderate selling dominance');
+  assert.equal(w.minutesUntilShare, 0);
+  // part-way through a minute, the minute at the old edge counts for the part still inside the window
+  const half = windowStats(book, 32, CFG, 0.5);
+  assert.equal(half.recent.total, 15 * 600 + 300);
+  assert.ok(Math.abs(half.sellShare - (5625 / 9300) * 100) < 1e-9);
+});
+
+test('moving window: changes compare the 15 minutes ending now with the 15 before', () => {
+  const book = new FlowBook();
+  const v = feed(book, '2026-11-20', 0, 16, { perMin: 600 });
+  feed(book, '2026-11-20', 16, 31, { perMin: 1200, startVol: v });
+  const w = windowStats(book, 30, CFG, 1); // recent = minutes 16-30, previous = minutes 1-15
+  assert.equal(w.sellChangePct, 100);
+  assert.equal(w.buyChangePct, 100);
+  assert.equal(w.totalChangePct, 100);
+  assert.equal(w.sellChange, 'increasing');
+  assert.equal(w.minutesUntilChange, 0);
+  // one minute earlier the earlier window would start before the open
+  const early = windowStats(book, 29, CFG, 1);
+  assert.equal(early.sellChangePct, null);
+  assert.equal(early.minutesUntilChange, 1);
+  assert.notEqual(early.sellShare, null, 'the share only needs one window');
+});
+
+test('moving window: figures are withheld until the window is fully covered, with the wait', () => {
+  const book = new FlowBook();
+  feed(book, '2026-11-20', 45, 61); // started watching just before 10:00: the first snapshot lands in minute 44
+  assert.equal(windowStats(book, 52, CFG, 0.3).sellShare, null);
+  assert.equal(windowStats(book, 52, CFG, 0.3).minutesUntilShare, 7);
+  assert.equal(windowStats(book, 58, CFG, 0.3).sellShare, null);
+  assert.equal(windowStats(book, 59, CFG, 0.3).sellShare, 50);
+  assert.equal(windowStats(book, 59, CFG, 0.3).minutesUntilChange, 15);
+  // a reconnect gap inside the window withholds it again
+  book.broken[55] = true;
+  assert.equal(windowStats(book, 59, CFG, 0.3).sellShare, null);
+  assert.equal(windowStats(book, 59, CFG, 0.3).minutesUntilShare, 12);
+});
+
+test('moving window: CVD change and trend are measured back from the current moment', () => {
+  const book = new FlowBook();
+  feed(book, '2026-11-20', 5, 36, { sellPct: 25 }); // net +300 a minute
+  const c = cvdStats(book, 35, CFG, 1);
+  assert.equal(c.cvd, 31 * 300);
+  assert.equal(c.cvdRate, 15 * 300);
+  assert.equal(c.cvdTrend, 'rising');
+  assert.ok(Math.abs(c.cvdSlopeShare - 0.5) < 1e-9);
+  assert.equal(c.minutesUntilTrend, 0);
+  const early = cvdStats(book, 33, CFG, 1); // 30 minutes back from here reaches minute 3, before coverage began
+  assert.equal(early.cvdTrend, null);
+  assert.equal(early.minutesUntilTrend, 1);
+});
+
 test('share bands', () => {
   assert.equal(classifyShare(60.1), 'strong selling dominance');
   assert.equal(classifyShare(60), 'moderate selling dominance');

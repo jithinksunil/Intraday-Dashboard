@@ -118,16 +118,18 @@ The volume between two snapshots therefore gets one label ([src/lib/orderFlow.js
 Candle colour is never used. Volume across a reconnect, a restart, or the session open is
 left unclassified, and a window that includes such a break is withheld rather than shown.
 
-- Windows are completed 5-minute candles: the last three against the three before.
+- Windows end at the current moment and are recalculated on every quote: the 15 minutes
+  ending now against the 15 before. Divergence still uses confirmed swings on completed 5-minute candles.
 - CVD resets each session and only covers the time the server was running. The per-minute
   totals are saved to `data/flow/<date>/` every minute, so a restart keeps the day's CVD. The whole-book ask / bid quantity
   samples are saved in the same files, so those trends also continue after a restart.
 - The first share needs 15 minutes of live data; changes and the CVD trend need 30.
 - Window lengths and thresholds are in `DEFAULT_FLOW_CONFIG`.
 
-Two exact companions sit beside it: **recent RVOL** (the last 15 minutes of volume against the
-usual for those minutes, from candles) and the **ask / bid quantity trend** (whole-book
-quantity, last 15 minutes against the 15 before).
+Exact companions sit beside it: **recent RVOL** (the last 15 minutes of volume against the
+usual for those minutes), the **RVOL volume trend** and **raw volume trend** built on it
+(all three recalculated on every quote, joining the feed's traded volume to stored candles) and the **ask / bid quantity trend** (whole-book
+quantity over the 15 minutes ending now against the 15 before, recalculated on every quote).
 
 Nothing in this section places or suggests a trade.
 

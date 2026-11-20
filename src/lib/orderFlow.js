@@ -220,21 +220,51 @@ export class FlowBook {
 }
 
 /**
- * Minutes until a run of `length` fully covered minutes, ending on a candle boundary, will exist,
- * assuming coverage continues from now. Null before any snapshot has arrived.
+ * Minutes until a run of `length` fully covered minutes will exist, assuming coverage continues
+ * from now. Null before any snapshot has arrived.
+ * Without `part` the run must end on a candle boundary (windows of completed candles). With
+ * `part` (see windowStats) the windows end at the current moment, so the run only has to reach
+ * back `length` minutes from the minute in progress.
  */
-export function minutesUntilCovered(book, minuteNow, length, cfg = DEFAULT_FLOW_CONFIG) {
+export function minutesUntilCovered(book, minuteNow, length, cfg = DEFAULT_FLOW_CONFIG, part = null) {
   if (book.seen.indexOf(true) < 0) return null;
+  const rolling = part != null;
   // The clean run starts after the most recent minute that was missed or broken.
   let lastBad = -1;
-  for (let i = Math.min(minuteNow, SESSION_MINUTES) - 1; i >= 0; i--) {
+  for (let i = Math.min(minuteNow, SESSION_MINUTES - (rolling ? 1 : 0)) - (rolling ? 0 : 1); i >= 0; i--) {
     if (!book.seen[i] || book.broken[i]) {
       lastBad = i;
       break;
     }
   }
+  if (rolling) return Math.max(0, lastBad + 1 + length - Math.min(minuteNow, SESSION_MINUTES - 1));
   const start = Math.ceil((lastBad + 1) / cfg.candleMinutes) * cfg.candleMinutes;
   return Math.max(0, start + length - minuteNow);
+}
+
+/**
+ * Buy / sell / unclassified volume over the `length` minutes that end `part` of the way through
+ * minute `last`. Volume is stored per minute, so the minute at the old edge counts for the share
+ * of it still inside the window (1 - part). `whole` = minute `last` is the one in progress, whose
+ * bucket already holds only the elapsed part.
+ */
+function rollingSum(book, last, length, part, whole) {
+  const t = { buy: 0, sell: 0, unclassified: 0 };
+  for (let i = Math.max(0, last - length); i <= Math.min(SESSION_MINUTES - 1, last); i++) {
+    const k = book.buckets[i];
+    if (!k) continue;
+    const w = i === last - length ? 1 - part : i === last && !whole ? part : 1;
+    t.buy += w * k.b;
+    t.sell += w * k.s;
+    t.unclassified += w * k.u;
+  }
+  return { ...t, total: t.buy + t.sell + t.unclassified };
+}
+
+/** The minute in progress and how far through it we are, for windows that end at the current moment. */
+function rollingClock(minuteNow, part) {
+  const m = Math.min(minuteNow, SESSION_MINUTES - 1);
+  return { m, part: minuteNow > m ? 1 : Math.min(1, Math.max(0, part)) }; // after the close: the whole last minute
 }
 
 const pctOf = (part, whole) => (whole > 0 ? (part / whole) * 100 : null);
@@ -261,21 +291,38 @@ export function classifyShare(sellShare, cfg = DEFAULT_FLOW_CONFIG) {
 }
 
 /**
- * Shares and changes over the two most recent 15-minute windows of COMPLETED 5-minute candles.
+ * Sell / buy shares over the most recent 15-minute window, and changes against the window before.
  * `minuteNow` is the current session minute index (may be >= SESSION_MINUTES after the close).
+ * Without `part`: windows of COMPLETED 5-minute candles, so values step every 5 minutes.
+ * With `part` (how far through the current minute we are, 0..1): windows end at the current
+ * moment, so values move with every quote.
  */
-export function windowStats(book, minuteNow, cfg = DEFAULT_FLOW_CONFIG) {
+export function windowStats(book, minuteNow, cfg = DEFAULT_FLOW_CONFIG, part = null) {
   const span = cfg.candleMinutes * cfg.windowCandles;
-  const end = Math.min(SESSION_MINUTES, Math.floor(Math.max(0, minuteNow) / cfg.candleMinutes) * cfg.candleMinutes);
-  const recentOk = book.covered(end - span, end);
-  const previousOk = book.covered(end - 2 * span, end - span);
-  const recent = recentOk ? book.sum(end - span, end) : null;
-  const previous = previousOk ? book.sum(end - 2 * span, end - span) : null;
+  let end;
+  let recentOk;
+  let previousOk;
+  let recent;
+  let previous;
+  if (part == null) {
+    end = Math.min(SESSION_MINUTES, Math.floor(Math.max(0, minuteNow) / cfg.candleMinutes) * cfg.candleMinutes);
+    recentOk = book.covered(end - span, end);
+    previousOk = book.covered(end - 2 * span, end - span);
+    recent = recentOk ? book.sum(end - span, end) : null;
+    previous = previousOk ? book.sum(end - 2 * span, end - span) : null;
+  } else {
+    const c = rollingClock(minuteNow, part);
+    end = c.m + 1;
+    recentOk = minuteNow >= 0 && book.covered(c.m - span, c.m + 1);
+    previousOk = minuteNow >= 0 && book.covered(c.m - 2 * span, c.m - span);
+    recent = recentOk ? rollingSum(book, c.m, span, c.part, true) : null;
+    previous = recentOk && previousOk ? rollingSum(book, c.m - span, span, c.part, false) : null;
+  }
   const classified = recent ? recent.buy + recent.sell : 0;
   const sellShare = recent ? pctOf(recent.sell, classified) : null;
   const sellChange = changePct(recent?.sell, previous?.sell);
   const buyChange = changePct(recent?.buy, previous?.buy);
-  const need = (windows) => minutesUntilCovered(book, minuteNow, windows * span, cfg);
+  const need = (windows) => minutesUntilCovered(book, minuteNow, windows * span, cfg, part);
   return {
     windowEnd: end,
     recent,
@@ -309,31 +356,53 @@ function slope(ys) {
 }
 
 /**
- * CVD now, its change over the last window, and its trend over the last `cvdTrendCandles`
- * completed candles. The trend is the fitted slope per candle as a share of the average candle
+ * CVD now, its change over the last window, and its trend over `cvdTrendCandles` points one
+ * candle apart. The trend is the fitted slope per candle as a share of the average candle
  * volume, so it means the same thing for a heavily and a lightly traded stock.
+ * Without `part` the points are the closes of completed candles; with `part` (see windowStats)
+ * the last point is the current moment and the others step back one candle length each.
  */
-export function cvdStats(book, minuteNow, cfg = DEFAULT_FLOW_CONFIG) {
+export function cvdStats(book, minuteNow, cfg = DEFAULT_FLOW_CONFIG, part = null) {
   const curve = book.cvdCurve();
   const lastIdx = curve.findLastIndex((v) => v != null);
   const now = lastIdx < 0 ? null : curve[lastIdx];
   const cm = cfg.candleMinutes;
-  const end = Math.min(SESSION_MINUTES, Math.floor(Math.max(0, minuteNow) / cm) * cm);
   const span = cm * cfg.windowCandles;
-  const at = (minuteEnd) => (minuteEnd >= 1 ? curve[minuteEnd - 1] : null); // CVD at the end of minute (minuteEnd - 1)
-  const rate = at(end) != null && at(end - span) != null && book.covered(end - span, end) ? at(end) - at(end - span) : null;
-
   const n = cfg.cvdTrendCandles;
+  let rate = null;
   let trend = null;
   let slopeShare = null;
-  const start = end - n * cm;
-  if (start >= 0 && book.covered(start, end)) {
-    const points = Array.from({ length: n }, (_, k) => at(start + (k + 1) * cm));
-    const volume = book.sum(start, end).total / n;
-    if (points.every((p) => p != null) && volume > 0) {
-      slopeShare = slope(points) / volume;
-      trend = slopeShare > cfg.cvdTrendMinSlope ? 'rising' : slopeShare < -cfg.cvdTrendMinSlope ? 'falling' : 'sideways';
+  let points = null;
+  let volume = 0;
+  if (part == null) {
+    const end = Math.min(SESSION_MINUTES, Math.floor(Math.max(0, minuteNow) / cm) * cm);
+    const at = (minuteEnd) => (minuteEnd >= 1 ? curve[minuteEnd - 1] : null); // CVD at the end of minute (minuteEnd - 1)
+    if (at(end) != null && at(end - span) != null && book.covered(end - span, end)) rate = at(end) - at(end - span);
+    const start = end - n * cm;
+    if (start >= 0 && book.covered(start, end)) {
+      points = Array.from({ length: n }, (_, k) => at(start + (k + 1) * cm));
+      volume = book.sum(start, end).total / n;
     }
+  } else if (minuteNow >= 0 && now != null) {
+    const c = rollingClock(minuteNow, part);
+    // CVD `back` minutes before the current moment: everything up to that minute, plus the part of it already elapsed then.
+    const delta = (i) => (book.buckets[i] ? book.buckets[i].b - book.buckets[i].s : 0);
+    const ago = (back) => {
+      if (back === 0) return now;
+      const i = c.m - back;
+      let cvd = 0;
+      for (let k = 0; k < i; k++) cvd += delta(k);
+      return cvd + c.part * delta(i);
+    };
+    if (book.covered(c.m - span, c.m + 1)) rate = now - ago(span);
+    if (book.covered(c.m - n * cm, c.m + 1)) {
+      points = Array.from({ length: n }, (_, k) => ago((n - 1 - k) * cm));
+      volume = rollingSum(book, c.m, n * cm, c.part, true).total / n;
+    }
+  }
+  if (points?.every((p) => p != null) && volume > 0) {
+    slopeShare = slope(points) / volume;
+    trend = slopeShare > cfg.cvdTrendMinSlope ? 'rising' : slopeShare < -cfg.cvdTrendMinSlope ? 'falling' : 'sideways';
   }
   const firstSeen = book.seen.indexOf(true);
   return {
@@ -341,7 +410,7 @@ export function cvdStats(book, minuteNow, cfg = DEFAULT_FLOW_CONFIG) {
     cvdRate: rate,
     cvdTrend: trend,
     cvdSlopeShare: slopeShare,
-    minutesUntilTrend: trend ? 0 : minutesUntilCovered(book, minuteNow, n * cm, cfg),
+    minutesUntilTrend: trend ? 0 : minutesUntilCovered(book, minuteNow, n * cm, cfg, part),
     coveredFromMinute: firstSeen < 0 ? null : firstSeen,
     curve,
   };

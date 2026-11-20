@@ -322,7 +322,7 @@ test('engine: flow is withheld until a full window is covered, and survives a re
   assert.equal(f.minutesUntilShare, 7);
   assert.equal(f.cvd, 960);
   assert.equal(first.row(SYM).askQtyTrend.label, null, 'no book quantity samples');
-  assert.equal(first.row(SYM).askQtyTrend.minutesUntil, 27, 'no samples before 10:08, so the first usable windows are 10:05-10:20 and 10:20-10:35');
+  assert.equal(first.row(SYM).askQtyTrend.minutesUntil, 26, 'no samples before 10:08: at 10:34 the earlier window (10:05-10:19) has 12 sampled minutes');
   first.saveFlow();
   // a new process: same store, same session
   const second = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY, flowStore });
@@ -355,14 +355,49 @@ test('engine: whole-book quantity samples are saved, so the ask / bid trend surv
   for (let sec = 0; sec < 29 * 60; sec += 20) send(first, sec);
   first.saveFlow();
   const second = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY, flowStore });
-  const row = send(second, 30 * 60 + 5); // back one minute later, at 10:30
+  const row = send(second, 30 * 60); // back one minute later, at 10:30:00: windows are 10:15-10:30 and 10:00-10:15
   assert.equal(row.askQtyTrend.pct, 50);
   assert.equal(row.askQtyTrend.label, 'increasing');
   assert.equal(row.askQtyTrend.minutesUntil, 0);
   assert.equal(row.bidQtyTrend.label, 'flat');
+  // the windows end at the current moment, so the value moves within a 5-minute candle
+  const later = send(second, 32 * 60 + 30); // 10:32:30: the earlier window is now 10:02:30-10:17:30, part of it at 1,500
+  assert.ok(later.askQtyTrend.pct < 50 && later.askQtyTrend.pct > 30, `got ${later.askQtyTrend.pct}`);
   // without the store the same quote has nothing to compare
   const fresh = new RvolEngine({ symbols: [SYM], loadCandles: () => HISTORY });
-  assert.equal(send(fresh, 30 * 60 + 10).askQtyTrend.label, null);
+  assert.equal(send(fresh, 33 * 60).askQtyTrend.label, null);
+});
+
+test('engine: recent RVOL and both volume trends move with live quotes, joined to stored candles', () => {
+  // Baseline 200 a minute. Stored today: 600 a minute for 15 minutes, then 100 a minute for 15 (09:15-09:45).
+  const today = [...session('2026-11-20', 600, 15), ...session('2026-11-20', 100, 30).slice(15)];
+  const { engine } = engineWith([...HISTORY, ...today]);
+  // The feed's day total runs 1,000 above the candle total (pre-open trades), which must not leak into a window.
+  let row = engine.onQuote(quote('2026-11-20T09:44:59', 10500 + 1000)); // the feed and the candles both cover minute 09:44
+  // 09:50:00: 1,500 more shares since 09:45. Last 15 minutes = 09:35-09:50 = 1,000 from candles + 1,500 live.
+  row = engine.onQuote(quote('2026-11-20T09:50:00', 10500 + 1000 + 1500));
+  assert.equal(row.volumeWindowsLive, true);
+  assert.equal(row.recentVolume, 2500);
+  assert.ok(Math.abs(row.recentRvol - 2500 / 3000) < 1e-9);
+  assert.equal(row.priorVolume, 6500, '09:20-09:35 from candles: 10 minutes at 600 and 5 at 100');
+  assert.ok(Math.abs(row.rawVolumeTrendPct - ((2500 - 6500) / 6500) * 100) < 1e-9);
+  assert.ok(Math.abs(row.volumeTrendPct - row.rawVolumeTrendPct) < 1e-9, 'flat baseline: both trends agree');
+  assert.equal(row.volumeTrend, 'falling');
+  // half a minute later with 300 more shares the values have moved, without waiting for a candle
+  const next = engine.onQuote(quote('2026-11-20T09:50:30', 10500 + 1000 + 1800));
+  assert.ok(next.recentVolume > row.recentVolume && next.recentVolume < 2800);
+  // once the feed has covered both windows, candles are not needed at all
+  const clock = (m, sec) => `2026-11-20T${String(9 + Math.floor((m + 15) / 60)).padStart(2, '0')}:${String((m + 15) % 60).padStart(2, '0')}:${sec}`; // m minutes after 09:15
+  let vol = 13300;
+  for (let m = 36; m <= 65; m++) {
+    vol += 300; // 300 shares a minute, reported at the end of each minute
+    engine.onQuote(quote(clock(m, '59'), vol));
+  }
+  row = engine.onQuote(quote(clock(66, '00'), vol)); // 10:21:00
+  assert.equal(row.volumeWindowsLive, true);
+  assert.equal(row.recentVolume, 4500);
+  assert.equal(row.recentRvol, 1.5);
+  assert.equal(row.volumeTrend, 'steady');
 });
 
 test('engine: recent RVOL and volume trend from completed candles', () => {
@@ -374,6 +409,10 @@ test('engine: recent RVOL and volume trend from completed candles', () => {
   assert.equal(row.priorRvol, 3);
   assert.ok(Math.abs(row.volumeTrendPct - (-250 / 3)) < 1e-9);
   assert.equal(row.volumeTrend, 'falling');
+  // raw volume: 1,500 shares in the last 15 minutes against 9,000 in the 15 before
+  assert.equal(row.recentVolume, 1500);
+  assert.equal(row.priorVolume, 9000);
+  assert.ok(Math.abs(row.rawVolumeTrendPct - (-250 / 3)) < 1e-9);
   const d = engine.detail(SYM);
   assert.equal(d.recentRvolCurve[14], 3);
   assert.equal(d.recentRvolCurve[29], 0.5);
@@ -381,4 +420,5 @@ test('engine: recent RVOL and volume trend from completed candles', () => {
   const none = engineWith(HISTORY).engine.onQuote(quote('2026-11-20T09:46:00', 1));
   assert.equal(none.recentRvol, null);
   assert.equal(none.volumeTrend, null);
+  assert.equal(none.rawVolumeTrendPct, null);
 });
