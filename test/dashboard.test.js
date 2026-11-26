@@ -422,3 +422,23 @@ test('engine: recent RVOL and volume trend from completed candles', () => {
   assert.equal(none.volumeTrend, null);
   assert.equal(none.rawVolumeTrendPct, null);
 });
+
+test('engine: depth updates are recorded per minute, and detail carries every chart curve', () => {
+  const { engine } = engineWith([...HISTORY, ...session('2026-11-20', 500, 60)]);
+  engine.onQuote(quote('2026-11-20T10:00:00', 30000));
+  const depth = (time, bid, ask, bq, aq) => ({ k: 'd5', sym: SYM, recv: ist(time) * 1000, bids: [[bid, bq, 1]], asks: [[ask, aq, 1]] });
+  engine.onDepth(depth('2026-11-20T10:00:10', 99.9, 100.1, 300, 100));
+  engine.onDepth(depth('2026-11-20T10:00:40', 99.9, 100.1, 100, 300));
+  engine.onDepth(depth('2026-11-20T16:00:00', 99, 101, 100, 100)); // after the close: not recorded
+  const d = engine.detail(SYM);
+  assert.ok(Math.abs(d.spreadPctCurve[45] - 0.2) < 1e-9);
+  assert.equal(d.imbalance5Curve[45], 0);
+  assert.equal(d.spreadPctCurve.filter((v) => v != null).length, 1);
+  for (const k of ['rvolTrendCurve', 'rawVolumeTrendCurve', 'sellShareCurve', 'sellChangeCurve', 'buyChangeCurve', 'totalChangeCurve', 'cvdRateCurve', 'cvdSlopeCurve', 'bookBuyQtyCurve', 'bookSellQtyCurve', 'imbalanceBookCurve', 'askQtyTrendCurve', 'bidQtyTrendCurve']) {
+    assert.equal(d[k].length, 375, k);
+  }
+  // Volume was the same every minute today and in the baseline, so both trends are flat.
+  assert.equal(d.rvolTrendCurve[29], 0);
+  assert.equal(d.rawVolumeTrendCurve[59], 0);
+  assert.equal(d.rvolTrendCurve[14], null, 'needs two 15-minute windows');
+});

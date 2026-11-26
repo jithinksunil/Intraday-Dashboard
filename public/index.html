@@ -90,6 +90,10 @@
   .guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 4; }
   .l-vwap { fill: none; stroke: var(--hot); stroke-width: 1.5; }
   .legend .vw::before { background: var(--hot); }
+  .l-buy { fill: none; stroke: var(--up); stroke-width: 2; stroke-linejoin: round; }
+  .l-sell { fill: none; stroke: var(--down); stroke-width: 2; stroke-linejoin: round; }
+  .legend .buy::before { background: var(--up); }
+  .legend .sell::before { background: var(--down); }
   .jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 0; }
   .jump a { color: var(--muted); text-decoration: none; font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; }
   .jump a:hover, .jump a:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
@@ -361,13 +365,55 @@ function chartSvg(lines, { fromZero, format, label, range, guides = [] }) {
   const y = (v) => T + (1 - (v - min) / (max - min)) * (H - T - B);
   const path = (arr) => { let d = '', pen = false; arr.forEach((v, i) => { if (v == null) return; d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); pen = true; }); return d; };
   guides = guides.map((g) => (typeof g === 'number' ? { v: g, label: format(g) } : g));
-  const guideLines = guides.map((g) => `<line class="guide" x1="${L}" x2="${W - R}" y1="${y(g.v)}" y2="${y(g.v)}"/><text x="${W - R}" y="${y(g.v) - 4}" text-anchor="end">${g.label}</text>`).join('');
+  // A guide label that would overlap one already drawn is left off; the line is still drawn.
+  const labelYs = [];
+  const guideLines = guides.map((g) => {
+    const ly = y(g.v) - 4 < T + 8 ? y(g.v) + 13 : y(g.v) - 4;
+    const room = labelYs.every((v) => Math.abs(v - ly) >= 13);
+    if (room) labelYs.push(ly);
+    return `<line class="guide" x1="${L}" x2="${W - R}" y1="${y(g.v)}" y2="${y(g.v)}"/>${room ? `<text x="${W - R}" y="${ly}" text-anchor="end">${g.label}</text>` : ''}`;
+  }).join('');
   const yTicks = [0, 0.5, 1].map((f) => { const v = min + (max - min) * f; return `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${format(v)}</text>`; }).join('');
   const xTicks = [[0, '09:15'], [105, '11:00'], [225, '13:00'], [374, '15:30']].map(([i, t]) => `<text x="${x(i)}" y="${H - 6}" text-anchor="${i === 0 ? 'start' : i === 374 ? 'end' : 'middle'}">${t}</text>`).join('');
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}">
     ${yTicks}${xTicks}${guideLines}
     ${lines.map((l) => (l.data ? `<path class="${l.cls}" d="${path(l.data)}"/>` : '')).join('')}
   </svg>`;
+}
+
+// ----- Per-minute series worked out on the page from the curves the server sends. -----
+const mapCurve = (a, f) => (a ? a.map((v, i) => (v == null ? null : f(v, i))) : null);
+// A 5-minute-candle curve is stored at each candle's first minute. This carries each value
+// forward from the minute its candle closed until the next one closes, i.e. what was known then.
+function afterClose(curve) {
+  if (!curve) return null;
+  const out = new Array(375).fill(null);
+  let v = null;
+  for (let j = 0; j < 375; j++) {
+    if (j >= 5 && curve[j - 5] != null) v = curve[j - 5];
+    out[j] = v;
+  }
+  return out;
+}
+const candleClose = (c, i) => c.price?.[i + 4] ?? c.price?.[i] ?? null; // close of the 5-minute candle starting at minute i
+function derivedCurves(c) {
+  if (!c) return null;
+  const atrNow = afterClose(c.atrCurve);
+  const stop = mapCurve(c.price, (p, i) => (atrNow?.[i] > 0 ? STOP_ATR_MULT * atrNow[i] : null));
+  return {
+    rvol: mapCurve(c.today, (v, i) => (c.average?.[i] > 0 ? v / c.average[i] : null)),
+    vwapDevPct: mapCurve(c.price, (p, i) => (c.vwapCurve?.[i] ? ((p - c.vwapCurve[i]) / c.vwapCurve[i]) * 100 : null)),
+    vwapDevAtr: mapCurve(c.price, (p, i) => (c.vwapCurve?.[i] && atrNow?.[i] > 0 ? (p - c.vwapCurve[i]) / atrNow[i] : null)),
+    atrPct: mapCurve(c.atrCurve, (a, i) => { const p = candleClose(c, i); return p ? (a / p) * 100 : null; }),
+    relAtr: mapCurve(c.atrCurve, (a, i) => (c.atrUsualCurve?.[i] > 0 ? a / c.atrUsualCurve[i] : null)),
+    normSlope: mapCurve(c.slopeCurve, (v) => v / EMA_SLOPE_CANDLES),
+    priceVsEma: mapCurve(c.emaCurve, (e, i) => { const p = candleClose(c, i); return p != null && e ? ((p - e) / e) * 100 : null; }),
+    buyShare: mapCurve(c.sellShareCurve, (v) => 100 - v),
+    stop,
+    stopLoss: mapCurve(stop, (d, i) => c.price[i] - d),
+    target: mapCurve(stop, (d, i) => c.price[i] + REWARD_MULT * d),
+    qty: mapCurve(stop, (d) => Math.floor(maxRisk / d)),
+  };
 }
 
 const fmtAtr = (v) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + ' ATR');
@@ -532,6 +578,27 @@ const signed = (v, d = 2) => (v == null ? '–' : (v >= 0 ? '+' : '−') + Math.
 function volVerdict(rel) {
   if (rel == null) return 'Not enough history yet to compare volatility with its usual level at this time of day.';
   return `Volatility rating: ${rate('relAtr', rel).label.toLowerCase().replace(' · ', ', ')}. ATR is ${rel.toFixed(2)}× its usual level for this time of day.`;
+}
+
+// ----- Width: how long the usual move takes (see src/lib/width.js). -----
+const fmtMin = (v) => {
+  if (v == null) return '–';
+  const t = Math.round(v);
+  return t < 60 ? t + ' min' : Math.floor(t / 60) + ' h ' + String(t % 60).padStart(2, '0') + ' min';
+};
+// The width that applies to the market right now: sideways or momentum, or null on a weak slope.
+const widthNow = (r) => (!r.width ? null : r.widthRegime === 'sideways' ? { kind: 'sideways', s: r.width.sideways } : r.widthRegime === 'momentum' ? { kind: 'momentum', s: r.width.momentum } : null);
+const regimeBadge = (r) => (r.widthRegime === 'sideways' ? { grade: 'neutral', label: 'Sideways market' } : r.widthRegime === 'momentum' ? { grade: 'good', label: 'Momentum market' } : r.emaSlopePct == null ? null : { grade: 'average', label: 'Weak slope · neither' });
+const happened = (x) => (x?.completionPct == null ? 'no moves measured yet' : `happened ${x.completionPct.toFixed(0)}% of ${qty.format(x.started)} times`);
+function widthVerdict(r) {
+  const w = r.width;
+  if (!w || (!w.sideways.started && !w.momentum.started)) return 'Needs completed 5-minute candles and an ATR to measure moves.';
+  const now = widthNow(r);
+  const span = `over the last ${w.sessions} sessions`;
+  if (!now) return `The EMA slope is weak, so the market is neither sideways nor momentum right now. Both widths are below for reference.`;
+  if (now.s.avg == null) return `The market is ${now.kind}, but no ${now.kind} moves finished ${span}, so there is no width yet.`;
+  const move = now.kind === 'sideways' ? `moved 1 ATR away and came back to where it started` : `moved 2 ATR in one direction`;
+  return `The market is ${now.kind}. In ${now.kind} stretches ${span}, price ${move} in ${fmtMin(now.s.avg)} on average (median ${fmtMin(now.s.median)}). It ${happened(now.s)} before the close.`;
 }
 
 function vwapVerdict(dev) {
@@ -703,7 +770,7 @@ function tradePlan(r) {
 }
 
 // Sections of the detail panel, in tile order. Ids match the section markup in renderDetail.
-const SECTIONS = [['s-book', 'Order book'], ['s-flow', 'Order Flow & Pressure'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance'], ['s-exec', 'Execution']];
+const SECTIONS = [['s-book', 'Order book'], ['s-flow', 'Order Flow & Pressure'], ['s-volume', 'Volume'], ['s-vwap', 'VWAP'], ['s-trend', 'Trend'], ['s-volatility', 'Volatility'], ['s-width', 'Width (time to move)'], ['s-momentum', 'Momentum'], ['s-levels', 'Pivot level support and resistance'], ['s-swings', 'Swing level support and resistance'], ['s-exec', 'Execution']];
 const viewFromHash = () => { const id = location.hash.slice(1); return SECTIONS.some(([s]) => s === id) ? id : null; };
 // The stock and section in view are remembered, so a reload comes back to the same place.
 const remember = (key, value) => { try { value == null ? localStorage.removeItem(key) : localStorage.setItem(key, value); } catch { /* storage unavailable */ } };
@@ -721,6 +788,12 @@ function renderDetail() {
   const plan = tradePlan(r);
   const f = r.flow ?? null; // estimated order flow; null on an older server
   drawCharts = Boolean(view); // the overview shows no charts, so don't build them
+  const dc = view ? derivedCurves(c) : null;
+  // One more chart in section `id`: built only while that section is the one on screen.
+  // legend: [[class, text]] with class '' (blue), 'avg', 'vw', 'buy' or 'sell'.
+  const chart = (id, title, legend, lines, opts) => `<div class="chart-head" style="margin-top:18px"><h3>${title}</h3><div class="legend">${legend.map(([cls, text]) => `<span class="${cls}">${text}</span>`).join('')}</div></div>
+      ${view !== id ? '' : c ? chartSvg(lines, { label: title.replace(/<[^>]+>/g, '').trim() + ' through the session', ...opts }) : '<p class="empty">Loading chart…</p>'}`;
+  const pctFmt = (d) => (v) => signed(v, d) + '%';
   const full = `
     <div class="metric" id="s-flow">
       <div class="hero"><span class="big num">${f?.sellShare == null ? '–' : f.sellShare.toFixed(0) + '%'}</span><span class="label">sell volume share, last 15 minutes ${EST} ${f?.sellShare == null ? '' : badge(FLOW_DOMINANCE[f.dominance])}</span></div>
@@ -741,6 +814,11 @@ function renderDetail() {
       </div>
       <div class="chart-head"><h3>CVD through the session ${EST}</h3><div class="legend"><span>CVD</span></div></div>
       ${c ? chartSvg([{ data: c.cvdCurve, cls: 'l-today' }], { guides: [0], format: (v) => compact.format(v), label: 'Estimated cumulative volume delta through the session, with zero marked' }) : '<p class="empty">Loading chart…</p>'}
+      ${chart('s-flow', `Buy and sell volume share, 15-minute windows ${EST}`, [['buy', 'Buy share'], ['sell', 'Sell share']], [{ data: dc?.buyShare, cls: 'l-buy' }, { data: c?.sellShareCurve, cls: 'l-sell' }], { range: [0, 100], guides: [{ v: 60, label: '60%' }, { v: 50, label: '50%' }, { v: 40, label: '40%' }], format: (v) => v.toFixed(0) + '%' })}
+      ${chart('s-flow', `Buy and sell volume change vs the 15 minutes before ${EST}`, [['buy', 'Buy change'], ['sell', 'Sell change'], ['avg', 'Total change']], [{ data: c?.totalChangeCurve, cls: 'l-avg' }, { data: c?.buyChangeCurve, cls: 'l-buy' }, { data: c?.sellChangeCurve, cls: 'l-sell' }], { guides: [{ v: 20, label: '+20%' }, { v: 0, label: '0' }, { v: -20, label: '−20%' }], format: pctFmt(0) })}
+      ${chart('s-flow', `CVD change over the last 15 minutes ${EST}`, [['', 'CVD change']], [{ data: c?.cvdRateCurve, cls: 'l-today' }], { guides: [0], format: (v) => compact.format(v) })}
+      ${chart('s-flow', `CVD trend slope, 30 minutes ${EST}`, [['', 'Slope ÷ average candle volume']], [{ data: c?.cvdSlopeCurve, cls: 'l-today' }], { guides: [{ v: 0.05, label: 'rising above' }, { v: 0, label: '0' }, { v: -0.05, label: 'falling below' }], format: (v) => v.toFixed(2) })}
+      <p class="note">Each point uses the same windows as the live values, ending at that minute. A window is drawn only where the feed was watching for all of it, so these lines start once the server has been running for 15 minutes (30 for the changes and the CVD trend) and break after a restart or reconnect.</p>
       <div class="chart-head" style="margin-top:18px"><h3>Reading these together (information only, not signals)</h3></div>
       <ul class="readlist">
         <li>Price falling, sell volume increasing, CVD falling: bearish pressure strengthening.</li>
@@ -769,6 +847,8 @@ function renderDetail() {
     ${c ? chartSvg([{ data: c.average, cls: 'l-avg' }, { data: c.today, cls: 'l-today' }], { fromZero: true, format: (v) => compact.format(v), label: 'Cumulative volume today against the average of previous sessions' }) : '<p class="empty">Loading chart…</p>'}
     <div class="chart-head" style="margin-top:18px"><h3>Recent RVOL through the session (15-minute windows)</h3><div class="legend"><span>Recent RVOL</span></div></div>
     ${c ? chartSvg([{ data: c.recentRvolCurve, cls: 'l-today' }], { fromZero: true, guides: [{ v: 1, label: '1× usual' }], format: (v) => v.toFixed(1) + '×', label: 'RVOL of each 15-minute window through the session, with 1 marked' }) : '<p class="empty">Loading chart…</p>'}
+    ${chart('s-volume', 'Day RVOL through the session', [['', 'RVOL']], [{ data: dc?.rvol, cls: 'l-today' }], { fromZero: true, guides: [{ v: 1, label: '1× usual' }], format: (v) => v.toFixed(1) + '×' })}
+    ${chart('s-volume', 'RVOL and raw volume trend (15 minutes vs the 15 before)', [['', 'RVOL volume trend'], ['avg', 'Raw volume trend']], [{ data: c?.rawVolumeTrendCurve, cls: 'l-avg' }, { data: c?.rvolTrendCurve, cls: 'l-today' }], { guides: [{ v: 20, label: 'rising +20%' }, { v: 0, label: '0' }, { v: -20, label: 'falling −20%' }], format: pctFmt(0) })}
     <p class="note">Day RVOL is cumulative, so it stays high after an active morning. Recent RVOL looks only at the last 15 minutes against the usual volume of those same minutes, so it shows whether activity is there now. RVOL volume trend compares it with the 15 minutes before: rising above +20%, falling below −20%. Raw volume trend compares the shares actually traded in the same two windows, with no adjustment for the time of day, so it is usually negative in the morning and positive late in the afternoon; it has no tag for that reason. During the session all three are recalculated on every quote, for the 15 minutes ending at the current moment: the newest minutes come from the live feed and the older ones from stored candles. For the first few minutes after a server start, and after the close, they use completed candles only.</p>
     <p class="note">RVOL = volume so far ÷ average volume by the same time of day. 1× is the base: exactly the usual volume. Below 1 means quieter than usual, above 1 means busier. It can never go below 0, because volume can't be negative. Ratings: under 1 below normal · 1–1.5 slightly above normal · 1.5–2 good · 2–3 very good · 3 and above excellent.</p>
     </div>
@@ -788,6 +868,8 @@ function renderDetail() {
       <div class="chart-head"><h3>Price and VWAP through the session</h3>
         <div class="legend"><span>Price</span><span class="vw">VWAP</span></div></div>
       ${c ? chartSvg([{ data: c.vwapCurve, cls: 'l-vwap' }, { data: c.price, cls: 'l-today' }], { fromZero: false, format: (v) => price.format(v), label: 'Price against VWAP through the session' }) : '<p class="empty">Loading chart…</p>'}
+      ${chart('s-vwap', 'VWAP deviation (%) through the session', [['', 'Deviation %']], [{ data: dc?.vwapDevPct, cls: 'l-today' }], { guides: [{ v: 0, label: 'at VWAP' }], format: pctFmt(2) })}
+      ${chart('s-vwap', 'Normalized VWAP deviation through the session', [['', 'Deviation in ATR']], [{ data: dc?.vwapDevAtr, cls: 'l-today' }], { guides: [{ v: 1.5, label: '+1.5' }, { v: 1, label: '+1.0' }, { v: 0, label: '0' }, { v: -1, label: '−1.0' }, { v: -1.5, label: '−1.5' }], format: (v) => signed(v) })}
       <p class="note">VWAP is the average price paid today, weighted by volume. It comes from the exchange feed and resets each morning. Normalized VWAP deviation = (price − VWAP) ÷ 5-minute ATR(14), so it shows the distance in units of the stock's own recent movement. 0 is the base: price exactly at VWAP. It can be less than 0 (price below VWAP) or greater than 0 (price above VWAP), with no fixed limit either way. Classification by distance from VWAP, either side: below 0.5 avoid (no deviation-based setup) · 0.5–1.0 moderate (lower priority) · 1.0–1.5 good candidate (evaluate setup) · above 1.5 excellent candidate (strongly consider for evaluation). Ranges: within ±0.5 close to VWAP (no-trade zone) · 0.5–1.0 moderately · 1.0–1.5 significantly · 1.5–2.0 strongly extended · beyond 2.0 extremely extended, above or below. Beyond ±1.0 is a momentum candidate; beyond ±1.5 is also a mean-reversion candidate. These are initial research thresholds, not validated trading levels.</p>
     </div>
 
@@ -804,7 +886,26 @@ function renderDetail() {
       <div class="chart-head"><h3>True range and ATR through the session (5-minute candles)</h3>
         <div class="legend"><span>True range</span><span class="vw">ATR</span><span class="avg">Usual ATR</span></div></div>
       ${c ? chartSvg([{ data: c.trCurve, cls: 'l-today' }, { data: c.atrUsualCurve, cls: 'l-avg' }, { data: c.atrCurve, cls: 'l-vwap' }], { fromZero: true, format: (v) => price.format(v), label: 'True range of each 5-minute candle against ATR' }) : '<p class="empty">Loading chart…</p>'}
+      ${chart('s-volatility', 'Relative ATR through the session', [['', 'Relative ATR']], [{ data: dc?.relAtr, cls: 'l-today' }], { fromZero: true, guides: [{ v: 1, label: '1× usual' }, { v: 2, label: '2× avoid above' }], format: (v) => v.toFixed(2) + '×' })}
+      ${chart('s-volatility', 'ATR % through the session', [['', 'ATR % of price']], [{ data: dc?.atrPct, cls: 'l-today' }], { fromZero: true, format: (v) => v.toFixed(3) + '%' })}
       <p class="note">True range is the largest of a candle's high − low and its gaps from the previous close. ATR is its 14-candle average. ATR % = ATR ÷ price, which makes stocks comparable. Relative ATR = ATR ÷ the average ATR at the same time of day over the last 20 sessions; 1× is normal for this time of day. It is a ratio of two ATRs, so it is always positive and says nothing about direction: above 1 means more movement than usual, below 1 means less. Ratings: under 0.8 bad · 0.8–1 normal, avoid · 1–1.2 normal, good · 1.2–1.5 very good · 1.5–2 exceptional · 2–3 very high, avoid · above 3 extreme, avoid. These use completed 5-minute candles and refresh every 5 minutes.</p>
+    </div>
+
+    <div class="metric" id="s-width">
+      <div class="hero"><span class="big num">${fmtMin(widthNow(r)?.s.avg)}</span><span class="label">width now: usual time for the move this market makes ${badge(regimeBadge(r))}</span></div>
+      <p class="verdict">${widthVerdict(r)}</p>
+      <div class="stats">
+        <div class="stat"><div class="k">Sideways width (average)</div><div class="v num">${fmtMin(r.width?.sideways.avg)}</div><div class="k">1 ATR out, then back to the start · median ${fmtMin(r.width?.sideways.median)}</div></div>
+        <div class="stat"><div class="k">Sideways: how often</div><div class="v num">${r.width?.sideways.completionPct == null ? '–' : r.width.sideways.completionPct.toFixed(0) + '%'}</div><div class="k">${r.width ? qty.format(r.width.sideways.count) + ' of ' + qty.format(r.width.sideways.started) + ' sideways starts finished before the close' : ''}</div></div>
+        <div class="stat"><div class="k">Momentum width (average)</div><div class="v num">${fmtMin(r.width?.momentum.avg)}</div><div class="k">2 ATR in one direction · median ${fmtMin(r.width?.momentum.median)}</div></div>
+        <div class="stat"><div class="k">Momentum: how often</div><div class="v num">${r.width?.momentum.completionPct == null ? '–' : r.width.momentum.completionPct.toFixed(0) + '%'}</div><div class="k">${r.width ? qty.format(r.width.momentum.count) + ' of ' + qty.format(r.width.momentum.started) + ' momentum starts finished before the close' : ''}</div></div>
+        <div class="stat"><div class="k">1 ATR out and back, any market</div><div class="v num">${fmtMin(r.width?.any.sideways.avg)}</div><div class="k">${happened(r.width?.any.sideways)}</div></div>
+        <div class="stat"><div class="k">2 ATR move, any market</div><div class="v num">${fmtMin(r.width?.any.momentum.avg)}</div><div class="k">${happened(r.width?.any.momentum)}</div></div>
+        <div class="stat"><div class="k">Distances now</div><div class="v num">${r.atr5 == null ? '–' : '₹' + price.format(r.atr5) + ' · ₹' + price.format(2 * r.atr5)}</div><div class="k">1 ATR · 2 ATR (5-min ATR 14)</div></div>
+        <div class="stat"><div class="k">Measured over</div><div class="v num">${r.width ? r.width.sessions + ' sessions' : '–'}</div><div class="k">a start at every 5-minute close</div></div>
+      </div>
+      ${chart('s-width', 'Width of each move that started today', [['', '1 ATR out and back'], ['vw', '2 ATR move']], [{ data: c?.widthReversionCurve, cls: 'l-today' }, { data: c?.widthMomentumCurve, cls: 'l-vwap' }], { fromZero: true, guides: [r.width?.sideways.avg != null && { v: r.width.sideways.avg, label: 'sideways average' }, r.width?.momentum.avg != null && { v: r.width.momentum.avg, label: 'momentum average' }].filter(Boolean), format: (v) => Math.round(v) + ' min' })}
+      <p class="note">Width is a time, not a price: how long price usually takes to make a move. From every 5-minute close (the start), using the 5-minute ATR(14) at that moment: <b>sideways width</b> = minutes until price has gone 1 ATR away (either way) and come back to the starting price; <b>momentum width</b> = minutes until price has gone 2 ATR away in one direction. Each is averaged only over starts that were in that kind of market, judged by the EMA slope at the time: within ±0.005% per candle is sideways, 0.02% or more either way is momentum, in between is neither. Touches are found on 1-minute highs and lows, and the time runs to the end of the minute that reached the level. A move must finish in the same session; one still open at the close is not averaged, and counts as not happening. The chart shows each of today's starts at the minute it started, once its move has finished. These figures refresh every 5 minutes with the candles. They describe how this stock has behaved, not what it will do next.</p>
     </div>
 
     <div class="metric" id="s-momentum">
@@ -836,6 +937,8 @@ function renderDetail() {
       ${c ? chartSvg([{ data: c.emaCurve, cls: 'l-vwap' }, { data: c.price, cls: 'l-today' }], { format: (v) => price.format(v), label: 'Price against its 20-candle EMA through the session' }) : '<p class="empty">Loading chart…</p>'}
       <div class="chart-head" style="margin-top:18px"><h3>EMA slope through the session</h3><div class="legend"><span>Slope %</span></div></div>
       ${c ? chartSvg([{ data: c.slopeCurve, cls: 'l-today' }], { guides: [0], format: (v) => v.toFixed(3), label: 'EMA slope through the session with zero marked' }) : '<p class="empty">Loading chart…</p>'}
+      ${chart('s-trend', 'Normalized EMA slope (% per candle) through the session', [['', 'Slope % per candle']], [{ data: dc?.normSlope, cls: 'l-today' }], { guides: [{ v: 0.02, label: '+0.02' }, { v: 0, label: '0' }, { v: -0.02, label: '−0.02' }], format: (v) => v.toFixed(3) })}
+      ${chart('s-trend', 'Price vs EMA (%) through the session', [['', 'Price vs EMA %']], [{ data: dc?.priceVsEma, cls: 'l-today' }], { guides: [{ v: 0, label: 'at EMA' }], format: pctFmt(2) })}
       <p class="note">EMA is an average of the last 20 five-minute closes that gives recent candles more weight. EMA slope % = how much the EMA itself has changed over the last 5 candles (25 minutes): positive means the trend is rising, near zero means it is flattening. Normalized EMA slope % = EMA slope % ÷ 5, the average change in the EMA per candle. Ratings by size, in either direction: within ±0.005% avoid (flat, no clear trend) · 0.005–0.02% weak, avoid · 0.02–0.05% good candidate · above 0.05% excellent (strong trend). Headline values include the candle now forming; the charts show completed candles.</p>
     </div>
 
@@ -855,6 +958,11 @@ function renderDetail() {
       </div>
       <div class="chart-head"><h3>Order book depth (best 5 levels each side)</h3></div>
       ${bookTable(r.book)}
+      ${chart('s-book', 'Spread % through the session', [['', 'Spread % (minute average)']], [{ data: c?.spreadPctCurve, cls: 'l-today' }], { fromZero: true, guides: [{ v: 0.05, label: '0.05%' }, { v: 0.1, label: '0.1% limit' }], format: (v) => v.toFixed(3) + '%' })}
+      ${chart('s-book', 'Order book imbalance through the session', [['', 'Top 5 levels'], ['vw', 'Whole book']], [{ data: c?.imbalanceBookCurve, cls: 'l-vwap' }, { data: c?.imbalance5Curve, cls: 'l-today' }], { range: [-1, 1], guides: [{ v: 0, label: 'balanced' }], format: (v) => signed(v) })}
+      ${chart('s-book', 'Whole-book buy and sell quantity through the session', [['buy', 'Buy quantity'], ['sell', 'Sell quantity']], [{ data: c?.bookBuyQtyCurve, cls: 'l-buy' }, { data: c?.bookSellQtyCurve, cls: 'l-sell' }], { fromZero: true, format: (v) => compact.format(v) })}
+      ${chart('s-book', 'Ask and bid quantity trend (15 minutes vs the 15 before)', [['sell', 'Ask quantity trend'], ['buy', 'Bid quantity trend']], [{ data: c?.askQtyTrendCurve, cls: 'l-sell' }, { data: c?.bidQtyTrendCurve, cls: 'l-buy' }], { guides: [{ v: 10, label: '+10%' }, { v: 0, label: '0' }, { v: -10, label: '−10%' }], format: pctFmt(0) })}
+      <p class="note">The book charts are averages of every reading in each minute, recorded only while this server is running during market hours. Spread and top-5 imbalance are recorded from this version on, so they start empty until the server has run with it.</p>
       <p class="note">Ask and bid quantity trend: the average sell and buy quantity across the whole book over the 15 minutes ending now, against the 15 minutes before (increasing above +10%, reducing below −10%). It is recalculated on every quote, needs 30 minutes of live data, and carries on after a short server restart.</p>
       <p class="note">Spread % = (best ask − best bid) ÷ their midpoint: the cost of crossing the book. 0 is the base: no gap between buyers and sellers. It can never go below 0 and has no fixed upper limit, but it is usually under 0.2%. Anything above 0.1% is rated bad and not considered for a trade. Imbalance = (buy quantity − sell quantity) ÷ (buy + sell), from −1 (all sellers) to +1 (all buyers). "Whole book" uses the exchange's total buy and sell quantity across every level. Displayed orders can be cancelled at any time, so treat imbalance as a hint, not proof of buying or selling.</p>
     </div>
@@ -903,6 +1011,10 @@ function renderDetail() {
         <div class="stat"><div class="k">Capital needed</div><div class="v num">₹${qty.format(Math.round(plan.capital))}</div><div class="k num">shares × entry price</div></div>
         <div class="stat"><div class="k">Risk : reward</div><div class="v num">1 : 2</div><div class="k num">₹${qty.format(Math.round(plan.risk))} : ₹${qty.format(Math.round(plan.reward))}</div></div>
       </div>` : ''}
+      ${chart('s-exec', 'Entry, stop loss and target through the session', [['buy', 'Target'], ['', 'Entry (price)'], ['sell', 'Stop loss']], [{ data: dc?.target, cls: 'l-buy' }, { data: c?.price, cls: 'l-today' }, { data: dc?.stopLoss, cls: 'l-sell' }], { format: (v) => price.format(v) })}
+      ${chart('s-exec', 'Stop distance through the session', [['', 'Stop distance (1.5 × ATR)']], [{ data: dc?.stop, cls: 'l-today' }], { fromZero: true, format: (v) => '₹' + price.format(v) })}
+      ${chart('s-exec', `Position size through the session (max risk ₹${qty.format(maxRisk)})`, [['', 'Shares']], [{ data: dc?.qty, cls: 'l-today' }], { fromZero: true, format: (v) => qty.format(Math.round(v)) })}
+      <p class="note">The charts show the plan as it would have been at each minute: entry at that minute's price, and the ATR of the last 5-minute candle that had closed by then.</p>
       <p class="note">For a long (buy) trade entered at the last price. Stop distance = 1.5 × ATR(14) on 5-minute candles. Stop loss = entry − stop distance. Position size = max risk ÷ stop distance, rounded down to whole shares. Target = entry + 2 × stop distance, which gives risk : reward of 1 : 2. Set the max risk in the box at the top of the page. These numbers move with the price and ATR, and ignore brokerage, taxes and slippage; a real fill at the stop can be worse than the stop price.</p>
     </div>`;
   const tpl = document.createElement('template');
@@ -940,6 +1052,9 @@ function renderDetail() {
     ['s-volatility', 'ATR', rupee(r.atr5), '', '14 candles, 5-min', `ATR = Wilder average of true range over 14 five-minute candles: ATR = (previous ATR × 13 + true range) ÷ 14`],
     ['s-volatility', 'ATR %', r.atrPct == null ? '–' : r.atrPct.toFixed(3) + '%', '', 'ATR as a share of price', `ATR % = ATR ÷ last price × 100`],
     ['s-volatility', 'Relative ATR', r.relAtr == null ? '–' : r.relAtr.toFixed(2) + '×', '', '+ve value · 1× = usual for this time', `Relative ATR = current ATR ÷ average ATR at the same time of day over the last 20 sessions`, rate('relAtr', r.relAtr)],
+    ['s-width', 'Width now', fmtMin(widthNow(r)?.s.avg), '', widthNow(r) ? (widthNow(r).kind === 'sideways' ? '1 ATR out and back' : '2 ATR move') + ' · ' + happened(widthNow(r).s) : r.width ? 'weak slope: neither sideways nor momentum' : 'needs 5-minute candles', `Width now = sideways width when the EMA slope is flat (within ±0.005% per candle), momentum width when it is clear (0.02% or more); none in between`, regimeBadge(r)],
+    ['s-width', 'Sideways width', fmtMin(r.width?.sideways.avg), '', r.width ? `1 ATR out and back · median ${fmtMin(r.width.sideways.median)} · ${happened(r.width.sideways)}` : '', `Sideways width = average minutes, from a 5-minute close, until price moves 1 × ATR away and returns to that close. Starts in a sideways market only, last 20 sessions and today`],
+    ['s-width', 'Momentum width', fmtMin(r.width?.momentum.avg), '', r.width ? `2 ATR move · median ${fmtMin(r.width.momentum.median)} · ${happened(r.width.momentum)}` : '', `Momentum width = average minutes, from a 5-minute close, until price moves 2 × ATR away in either direction. Starts in a momentum market only, last 20 sessions and today`],
     ['s-momentum', 'Rate of change', pct(r.roc), tone(r.roc), 'over 10 candles (50 min)', `ROC % = (close now − close 10 candles ago) ÷ close 10 candles ago × 100`],
     ['s-momentum', 'RSI', r.rsi == null ? '–' : r.rsi.toFixed(1), '', 'base 50 · below 50 bearish · above 50 bullish · range 0 to 100', `RSI = 100 − 100 ÷ (1 + average gain ÷ average loss), Wilder averages over 14 five-minute closes`, rate('rsi', r.rsi)],
     ['s-trend', 'EMA 20', rupee(r.ema), '', r.priceVsEmaPct == null ? '' : 'price ' + signed(r.priceVsEmaPct) + '% vs EMA', `EMA = close × k + previous EMA × (1 − k), with k = 2 ÷ (20 + 1), on 5-minute closes`],
@@ -979,7 +1094,13 @@ async function loadCurves(sym) {
     const res = await fetch('/api/detail?sym=' + encodeURIComponent(sym));
     if (!res.ok) return;
     const d = await res.json();
-    if (sym === selected) { curves = { sym, cvdCurve: d.cvdCurve, recentRvolCurve: d.recentRvolCurve, average: d.average, today: d.today, price: d.price, vwapCurve: d.vwapCurve, trCurve: d.trCurve, atrCurve: d.atrCurve, atrUsualCurve: d.atrUsualCurve, rocCurve: d.rocCurve, rsiCurve: d.rsiCurve, emaCurve: d.emaCurve, slopeCurve: d.slopeCurve }; renderDetail(); }
+    if (sym === selected) {
+      // Every per-minute curve from the server (the row fields that come with it are left out).
+      curves = { sym };
+      for (const [k, v] of Object.entries(d)) if (Array.isArray(v) && v.length === 375) curves[k] = v;
+      curves.average = d.average; // null when the stock has no volume history
+      renderDetail();
+    }
   } catch { /* server down; the socket status already says so */ }
 }
 
@@ -1041,6 +1162,62 @@ $('list').addEventListener('click', (e) => {
 // and grade must match what the rating functions above produce, so the tooltip shows the tag as the tile does.
 // tagNote: when the tile shows no tag at all.
 const GUIDE = {
+  'Width now': {
+    tags: [
+      ['Sideways market', 'neutral', 'EMA slope within ±0.005% per candle.', 'The trend is flat, so moves tend to go out and come back. The tile shows the sideways width: how long a 1 ATR move away and back usually takes.'],
+      ['Momentum market', 'good', 'EMA slope 0.02% per candle or more, either way.', 'There is a clear trend, so moves tend to carry on. The tile shows the momentum width: how long a 2 ATR move usually takes.'],
+      ['Weak slope · neither', 'average', 'EMA slope between 0.005% and 0.02% per candle.', 'The slope is too weak for momentum and not flat enough for sideways, so no width applies. The same zone the Trend section marks as avoid.'],
+    ],
+    tagNote: 'No tag until the EMA can be calculated.',
+    what: 'How long the move this market usually makes takes to play out, in minutes. In a sideways market that is 1 ATR away and back to the start; in a momentum market, 2 ATR in one direction. It sets the time frame for a trade.',
+    read: [
+      ['A short width', 'Moves of that size play out quickly. A trade built on them should resolve soon; if it has not, the move is probably not coming.'],
+      ['A long width', 'Moves of that size take a long time. Make sure enough of the session is left, and expect to hold through noise.'],
+      ['How often', 'The share of starts where the move finished before the close. A low figure means the move is often not reached at all.'],
+    ],
+    use: [
+      'The time left in the session: a width longer than the time left means the move is unlikely to finish today.',
+      'Execution: the target is 2 × the stop distance (3 ATR away), so a momentum width tells you roughly how long reaching it takes.',
+      'Relative ATR: on a busier day than usual, moves finish faster than the average suggests.',
+    ],
+    mind: [
+      'An average over the last 20 sessions and today. It describes the past, not a promise about the next move.',
+      'Overlapping starts (one every 5 minutes) share much of the same price path, so the samples are not independent.',
+      'Moves that did not finish before the close are not averaged, so the width describes the moves that did happen; read it with how often.',
+    ],
+  },
+  'Sideways width': {
+    what: 'In a sideways market, the average time for price to move 1 ATR away from a starting point (either direction) and come back to that starting price. It is the length of one typical swing out and back: the time a mean-reversion trade needs.',
+    read: [
+      ['Minutes', 'Average from the start to the return. The median is shown too; when it is much lower than the average, a few slow moves pull the average up.'],
+      ['How often', 'The share of sideways starts that went out and came back before the close.'],
+      ['–', 'No sideways moves finished in the period, or the market was never sideways.'],
+    ],
+    use: [
+      'VWAP: in a sideways market price tends to come back towards VWAP; this width says how long that usually takes.',
+      'Width now: this figure only applies while the market is sideways.',
+    ],
+    mind: [
+      'Only starts where the EMA slope was flat (within ±0.005% per candle) are averaged.',
+      'The ATR is the one at each start, so the distance grows and shrinks with volatility.',
+    ],
+  },
+  'Momentum width': {
+    what: 'In a momentum market, the average time for price to move 2 ATR from a starting point, in either direction. It is how long a typical trending leg of that size takes.',
+    read: [
+      ['Minutes', 'Average time to cover 2 ATR. A shorter width means stronger, faster trends.'],
+      ['How often', 'The share of momentum starts that reached 2 ATR before the close.'],
+      ['–', 'No momentum moves finished in the period, or the market never trended clearly.'],
+    ],
+    use: [
+      'Execution: with the stop at 1.5 ATR and the target at 3 ATR, this width is a rough lower bound for how long the target takes.',
+      'EMA slope: this figure only applies while the slope is clear (0.02% per candle or more).',
+    ],
+    mind: [
+      'The move is measured in either direction, not only the way the trend pointed.',
+      'Only starts where the EMA slope was clear are averaged.',
+    ],
+  },
   'Sell volume share': {
     tags: [
       ['Strong selling dominance', 'sell', 'Sell share above 60%.', 'More than 60 of every 100 classified shares in the last 15 minutes were sold at the buyer\'s price. Sellers are in clear control of trading. If price is not falling with it, buyers are absorbing the selling.'],
@@ -2024,6 +2201,8 @@ const setHeaderHeight = () => document.documentElement.style.setProperty('--head
 setHeaderHeight();
 new ResizeObserver(setHeaderHeight).observe(document.querySelector('header'));
 setInterval(renderStatus, 5000);
+// Order-flow and book charts gain a point every minute; refresh them while a section is open.
+setInterval(() => { if (selected && view && socketUp && document.visibilityState === 'visible') loadCurves(selected); }, 60000);
 window.addEventListener('resize', schedule);
 </script>
 </body>

@@ -87,7 +87,25 @@ export class FlowBook {
     this.seen = new Array(SESSION_MINUTES).fill(false); // a snapshot arrived during this minute
     this.broken = new Array(SESSION_MINUTES).fill(false); // a reconnect gap ended in this minute
     this.bookQty = new Array(SESSION_MINUTES).fill(null); // { buy, sell, n }: sums of whole-book quantity samples
+    this.depth = new Array(SESSION_MINUTES).fill(null); // { sp, sn, im, imn }: sums of spread % and top-5 imbalance samples
     this.stats = { buy: 0, sell: 0, unclassified: 0, multi: 0, why: {} };
+  }
+
+  /** Adds one sample of the spread % and the top-5 imbalance for a session minute (either may be null). */
+  addDepth(idx, spreadPct, imbalance5) {
+    if (!(idx >= 0 && idx < SESSION_MINUTES)) return;
+    const okSp = Number.isFinite(spreadPct);
+    const okIm = Number.isFinite(imbalance5);
+    if (!okSp && !okIm) return;
+    const k = (this.depth[idx] ??= { sp: 0, sn: 0, im: 0, imn: 0 });
+    if (okSp) {
+      k.sp += spreadPct;
+      k.sn++;
+    }
+    if (okIm) {
+      k.im += imbalance5;
+      k.imn++;
+    }
   }
 
   /** Adds one sample of the whole book's total buy and sell quantity for a session minute. */
@@ -200,7 +218,11 @@ export class FlowBook {
     this.bookQty.forEach((k, i) => {
       if (k?.n) bookQty[i] = [k.buy, k.sell, k.n];
     });
-    return { day: this.day, buckets, seen: flags(this.seen), broken: flags(this.broken), stats: this.stats, bookQty };
+    const depth = {};
+    this.depth.forEach((k, i) => {
+      if (k) depth[i] = [k.sp, k.sn, k.im, k.imn];
+    });
+    return { day: this.day, buckets, seen: flags(this.seen), broken: flags(this.broken), stats: this.stats, bookQty, depth };
   }
 
   /** Restores a saved session. The first snapshot after a restart only re-sets the baseline. */
@@ -210,6 +232,7 @@ export class FlowBook {
     book.reset(data.day);
     for (const [i, [b, s, u, m]] of Object.entries(data.buckets ?? {})) book.buckets[Number(i)] = { b, s, u, m };
     for (const [i, [buy, sell, n]] of Object.entries(data.bookQty ?? {})) book.bookQty[Number(i)] = { buy, sell, n };
+    for (const [i, [sp, sn, im, imn]] of Object.entries(data.depth ?? {})) book.depth[Number(i)] = { sp, sn, im, imn };
     for (const i of data.seen ?? []) book.seen[i] = true;
     for (const i of data.broken ?? []) book.broken[i] = true;
     book.gapPending = false; // the first snapshot after a restart re-sets the baseline anyway
@@ -437,4 +460,84 @@ export function divergence(book, swingLows, swingHighs, cfg = DEFAULT_FLOW_CONFI
   const bearish = highs.length === 2 && highs[1].price > highs[0].price && highs[1].cvd < highs[0].cvd ? highs[1].t : null;
   if (bullish && bearish) return bullish > bearish ? 'bullish' : 'bearish';
   return bullish ? 'bullish' : bearish ? 'bearish' : null;
+}
+
+/**
+ * The order-flow measures at the end of every session minute, for the charts: the same windows
+ * as the live values (windowStats / cvdStats with the window ending at the minute's end), so a
+ * chart point matches what the tile showed at that moment. Null where a window isn't covered.
+ * Returns arrays of SESSION_MINUTES values: sellShare, sellChange, buyChange, totalChange (percent),
+ * cvdRate (CVD change over the window) and cvdSlope (CVD trend slope as a share of candle volume).
+ */
+export function flowCurves(book, cfg = DEFAULT_FLOW_CONFIG) {
+  const empty = () => new Array(SESSION_MINUTES).fill(null);
+  const out = { sellShare: empty(), sellChange: empty(), buyChange: empty(), totalChange: empty(), cvdRate: empty(), cvdSlope: empty() };
+  const cm = cfg.candleMinutes;
+  const span = cm * cfg.windowCandles;
+  const n = cfg.cvdTrendCandles;
+  const cum = new Array(SESSION_MINUTES); // CVD at the end of each minute
+  let run = 0;
+  for (let i = 0; i < SESSION_MINUTES; i++) {
+    const k = book.buckets[i];
+    if (k) run += k.b - k.s;
+    cum[i] = run;
+  }
+  const lastSeen = book.seen.lastIndexOf(true);
+  for (let m = 0; m <= lastSeen; m++) {
+    if (!book.seen[m]) continue;
+    const w = windowStats(book, m, cfg, 1);
+    out.sellShare[m] = w.sellShare;
+    out.sellChange[m] = w.sellChangePct;
+    out.buyChange[m] = w.buyChangePct;
+    out.totalChange[m] = w.totalChangePct;
+    if (book.covered(m - span, m + 1)) out.cvdRate[m] = cum[m] - cum[m - span];
+    if (book.covered(m - n * cm, m + 1)) {
+      const points = Array.from({ length: n }, (_, k) => cum[m - (n - 1 - k) * cm]);
+      const volume = rollingSum(book, m, n * cm, 1, true).total / n;
+      if (volume > 0) out.cvdSlope[m] = slope(points) / volume;
+    }
+  }
+  return out;
+}
+
+/**
+ * Order-book measures per session minute, for the charts: the average whole-book buy and sell
+ * quantity, the whole-book imbalance, the average spread % and top-5 imbalance, and the ask / bid
+ * quantity trend (average of the `minutes` ending at that minute against the `minutes` before,
+ * each needing `minSampled` minutes with readings). Null where there were no readings.
+ */
+export function bookCurves(book, minutes = 15, minSampled = Math.ceil(minutes * 0.8)) {
+  const empty = () => new Array(SESSION_MINUTES).fill(null);
+  const out = { buyQty: empty(), sellQty: empty(), imbalance: empty(), spreadPct: empty(), imbalance5: empty(), askTrend: empty(), bidTrend: empty() };
+  book.bookQty.forEach((k, i) => {
+    if (!k?.n) return;
+    const buy = k.buy / k.n;
+    const sell = k.sell / k.n;
+    out.buyQty[i] = buy;
+    out.sellQty[i] = sell;
+    if (buy + sell > 0) out.imbalance[i] = (buy - sell) / (buy + sell);
+  });
+  (book.depth ?? []).forEach((k, i) => {
+    if (k?.sn) out.spreadPct[i] = k.sp / k.sn;
+    if (k?.imn) out.imbalance5[i] = k.im / k.imn;
+  });
+  const avg = (from, to, side) => {
+    let sum = 0;
+    let n = 0;
+    let sampled = 0;
+    for (let i = Math.max(0, from); i <= to; i++) {
+      const k = book.bookQty[i];
+      if (!k?.n) continue;
+      sum += k[side];
+      n += k.n;
+      sampled++;
+    }
+    return sampled >= minSampled ? sum / n : null;
+  };
+  for (let m = 2 * minutes - 1; m < SESSION_MINUTES; m++) {
+    if (!book.bookQty[m]?.n) continue;
+    out.askTrend[m] = changePct(avg(m - minutes + 1, m, 'sell'), avg(m - 2 * minutes + 1, m - minutes, 'sell'));
+    out.bidTrend[m] = changePct(avg(m - minutes + 1, m, 'buy'), avg(m - 2 * minutes + 1, m - minutes, 'buy'));
+  }
+  return out;
 }

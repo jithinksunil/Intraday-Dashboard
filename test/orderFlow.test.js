@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  changePct, classifyChange, classifyInterval, classifyShare, cvdStats, DEFAULT_FLOW_CONFIG as CFG, divergence, FlowBook, minutesUntilCovered, windowStats,
+  bookCurves, changePct, classifyChange, classifyInterval, classifyShare, cvdStats, DEFAULT_FLOW_CONFIG as CFG, divergence, FlowBook, flowCurves, minutesUntilCovered, windowStats,
 } from '../src/lib/orderFlow.js';
 
 const ist = (s) => Date.parse(`${s}+05:30`);
@@ -374,4 +374,68 @@ test('the wait shown accounts for a break in coverage', () => {
   const clean = new FlowBook();
   feed(clean, '2026-11-20', 225, 232);
   assert.equal(minutesUntilCovered(clean, 232, 15), 8);
+});
+
+// ---------- curves for the charts ----------
+test('flowCurves: each point equals the live window ending at that minute, and gaps leave holes', () => {
+  const book = new FlowBook(CFG);
+  book.reset(1);
+  for (let i = 0; i < 60; i++) {
+    book.buckets[i] = { b: 100 + i * 3, s: 200 - i * 2, u: 5, m: 0 };
+    book.seen[i] = true;
+  }
+  const fc = flowCurves(book, CFG);
+  for (const m of [15, 29, 30, 44, 59]) {
+    const w = windowStats(book, m, CFG, 1);
+    assert.equal(fc.sellShare[m], w.sellShare, `share at ${m}`);
+    assert.equal(fc.sellChange[m], w.sellChangePct, `sell change at ${m}`);
+    assert.equal(fc.buyChange[m], w.buyChangePct, `buy change at ${m}`);
+    assert.equal(fc.totalChange[m], w.totalChangePct, `total change at ${m}`);
+  }
+  assert.equal(fc.sellShare[14], null, 'the first window needs 15 whole minutes before the current one');
+  assert.notEqual(fc.sellShare[15], null);
+  assert.equal(fc.sellShare[60], null, 'nothing after the last snapshot');
+  // At the newest minute the chart point is the live CVD rate and trend.
+  const c = cvdStats(book, 59, CFG, 1);
+  assert.equal(fc.cvdRate[59], c.cvdRate);
+  assert.ok(Math.abs(fc.cvdSlope[59] - c.cvdSlopeShare) < 1e-12);
+  assert.equal(fc.cvdSlope[29], null);
+  assert.notEqual(fc.cvdSlope[30], null);
+
+  book.broken[40] = true;
+  const gap = flowCurves(book, CFG);
+  assert.equal(gap.sellShare[55], null, 'a window that includes the reconnect minute is not drawn');
+  assert.notEqual(gap.sellShare[56], null);
+});
+
+test('bookCurves: minute averages, whole-book imbalance, quantity trends and depth samples', () => {
+  const book = new FlowBook(CFG);
+  book.reset(1);
+  for (let i = 0; i < 40; i++) {
+    const buy = i < 20 ? 1000 : 1200;
+    book.addBookQty(i, buy, 500);
+    book.addBookQty(i, buy, 500);
+  }
+  book.addDepth(3, 0.04, 0.2);
+  book.addDepth(3, 0.06, null);
+  book.addDepth(4, null, null); // nothing usable: no entry
+  const bc = bookCurves(book, 15, 12);
+  assert.equal(bc.buyQty[5], 1000);
+  assert.equal(bc.sellQty[5], 500);
+  assert.ok(Math.abs(bc.imbalance[5] - 1 / 3) < 1e-12);
+  assert.ok(Math.abs(bc.spreadPct[3] - 0.05) < 1e-12);
+  assert.equal(bc.imbalance5[3], 0.2);
+  assert.equal(bc.spreadPct[4], null);
+  assert.equal(bc.bidTrend[28], null, 'needs two full windows');
+  // minutes 15-29 average (5 x 1000 + 10 x 1200) / 15 against 1000 for minutes 0-14
+  assert.ok(Math.abs(bc.bidTrend[29] - ((5 * 1000 + 10 * 1200) / 15 / 1000 - 1) * 100) < 1e-9);
+  assert.equal(bc.askTrend[29], 0);
+  assert.equal(bc.bidTrend[45], null, 'no readings at that minute');
+  // Too few readings in a window: no trend.
+  for (let i = 20; i < 25; i++) book.bookQty[i] = null;
+  assert.equal(bookCurves(book, 15, 12).bidTrend[34], null);
+  // Depth samples survive a restart.
+  const back = FlowBook.fromJSON(JSON.parse(JSON.stringify(book.toJSON())), CFG);
+  assert.deepEqual(back.depth[3], book.depth[3]);
+  assert.equal(FlowBook.fromJSON({ day: 1, buckets: {} }, CFG).depth.every((k) => k == null), true, 'older saved files have no depth');
 });

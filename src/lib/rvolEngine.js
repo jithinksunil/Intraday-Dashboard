@@ -1,10 +1,11 @@
 // Holds the live state behind the dashboard: latest quote per symbol, the RVOL baseline, and
 // today's per-minute curves (cumulative volume, price, VWAP). Fed with normalized quote records; no I/O of its own.
 import { atr, ema, istDay, istSecOfDay, last, pctChange, pivots, relativeAtrByTime, resample, roc, rsi, swings, SESSION_OPEN_S, toDaily, trueRanges } from './indicators.js';
-import { changePct, cvdStats, DEFAULT_FLOW_CONFIG, divergence, FlowBook, windowStats } from './orderFlow.js';
+import { bookCurves, changePct, cvdStats, DEFAULT_FLOW_CONFIG, divergence, FlowBook, flowCurves, windowStats } from './orderFlow.js';
 import { buildBaseline, expectedVolume, minuteIndex, rvolAt, SESSION_MINUTES, todayCurve, volumeBetween, windowRvol } from './rvol.js';
 import { inMarketHours } from './time.js';
 import { sessionPriceCurves, vwapDeviationPct } from './vwapCurve.js';
+import { moveWidths, regimeOf } from './width.js';
 
 const ROC_BARS = 10;
 const RSI_BARS = 14;
@@ -53,7 +54,15 @@ export class RvolEngine {
     s.recentRvol = windowRvol(stored, s.baseline, end, RECENT_MINUTES);
     s.priorRvol = windowRvol(stored, s.baseline, end - RECENT_MINUTES, RECENT_MINUTES);
     s.recentRvolCurve = new Array(SESSION_MINUTES).fill(null);
-    for (let e = RECENT_MINUTES; e <= end; e += 5) s.recentRvolCurve[e - 1] = windowRvol(stored, s.baseline, e, RECENT_MINUTES)?.rvol ?? null;
+    s.rvolTrendCurve = new Array(SESSION_MINUTES).fill(null); // RVOL volume trend %, same windows
+    s.rawVolumeTrendCurve = new Array(SESSION_MINUTES).fill(null); // raw volume trend %, same windows
+    for (let e = RECENT_MINUTES; e <= end; e += 5) {
+      const w = windowRvol(stored, s.baseline, e, RECENT_MINUTES);
+      const p = windowRvol(stored, s.baseline, e - RECENT_MINUTES, RECENT_MINUTES);
+      s.recentRvolCurve[e - 1] = w?.rvol ?? null;
+      s.rvolTrendCurve[e - 1] = changePct(w?.rvol, p?.rvol);
+      s.rawVolumeTrendCurve[e - 1] = changePct(w?.volume, p?.volume);
+    }
     // Previous session's high, low and close, for pivot points.
     s.prevDay = toDaily(m1.slice(-3000)).filter((k) => istDay(k.t) < s.day).at(-1) ?? null;
     // Volatility on completed 5-minute candles: true range, ATR(14), and ATR relative to the
@@ -103,6 +112,8 @@ export class RvolEngine {
       s.trCurve[i] = tr[n];
       s.atrCurve[i] = a[n];
     });
+    // Width: how long 1 ATR out-and-back (sideways) and 2 ATR (momentum) moves usually take.
+    s.width = moveWidths(m1.slice(-9000), c5, a, slopeSeries.map((v) => (v == null ? null : v / SLOPE_BARS)), s.day);
     const pc = sessionPriceCurves(m1, s.day);
     s.price = pc.price.map((v, i) => v ?? s.price?.[i] ?? null);
     s.vwapCurve = pc.vwap.map((v, i) => v ?? s.vwapCurve?.[i] ?? null);
@@ -159,6 +170,12 @@ export class RvolEngine {
     const s = this.state.get(d.sym);
     if (!s || d.k !== 'd5') return null;
     s.book = { bids: d.bids, asks: d.asks, recv: d.recv };
+    // One sample per depth update for the spread and imbalance charts, kept with the session's flow book.
+    const tSec = Math.floor(d.recv / 1000);
+    if (s.flow?.day != null && s.flow.day === istDay(tSec) && inMarketHours(d.recv)) {
+      const m = this.bookMetrics(s);
+      s.flow.addDepth(minuteIndex(tSec), m.spreadPct, m.imbalance5);
+    }
     return this.row(d.sym);
   }
 
@@ -353,6 +370,18 @@ export class RvolEngine {
     return out;
   }
 
+  /**
+   * Width summaries (without the per-minute curves) and the market type right now, from the live
+   * EMA slope: 'sideways', 'momentum', or null for a weak slope.
+   */
+  widthMetrics(s) {
+    const w = s.width;
+    return {
+      width: w ? { sideways: w.sideways, momentum: w.momentum, any: w.any, sessions: w.sessions } : null,
+      widthRegime: regimeOf(s.emaSlopePct == null ? null : s.emaSlopePct / SLOPE_BARS),
+    };
+  }
+
   row(sym) {
     const s = this.state.get(sym);
     return {
@@ -383,6 +412,7 @@ export class RvolEngine {
       ...this.pivotMetrics(s),
       ...this.swingMetrics(s),
       ...this.flowMetrics(s),
+      ...this.widthMetrics(s),
     };
   }
 
@@ -390,10 +420,27 @@ export class RvolEngine {
     return [...this.state.keys()].map((sym) => this.row(sym));
   }
 
-  /** Curves for the charts, one point per session minute: volume (average vs today), price and VWAP. */
+  /**
+   * Curves for the charts, one point per session minute: volume (average vs today), price and
+   * VWAP, the indicator curves on 5-minute candles, and the order-flow and order-book measures.
+   */
   detail(sym) {
     const s = this.state.get(sym);
     if (!s) return null;
-    return { ...this.row(sym), average: s.baseline?.curve ?? null, today: s.today ?? null, price: s.price ?? null, vwapCurve: s.vwapCurve ?? null, trCurve: s.trCurve ?? null, atrCurve: s.atrCurve ?? null, atrUsualCurve: s.atrUsualCurve ?? null, rocCurve: s.rocCurve ?? null, rsiCurve: s.rsiCurve ?? null, emaCurve: s.emaCurve ?? null, slopeCurve: s.slopeCurve ?? null, cvdCurve: s.flow?.cvdCurve() ?? null, recentRvolCurve: s.recentRvolCurve ?? null };
+    const fc = s.flow ? flowCurves(s.flow, this.flowConfig) : null;
+    const bc = s.flow ? bookCurves(s.flow, RECENT_MINUTES, Math.ceil(RECENT_MINUTES * 0.8)) : null;
+    return {
+      ...this.row(sym),
+      average: s.baseline?.curve ?? null, today: s.today ?? null, price: s.price ?? null, vwapCurve: s.vwapCurve ?? null,
+      trCurve: s.trCurve ?? null, atrCurve: s.atrCurve ?? null, atrUsualCurve: s.atrUsualCurve ?? null,
+      rocCurve: s.rocCurve ?? null, rsiCurve: s.rsiCurve ?? null, emaCurve: s.emaCurve ?? null, slopeCurve: s.slopeCurve ?? null,
+      cvdCurve: s.flow?.cvdCurve() ?? null, recentRvolCurve: s.recentRvolCurve ?? null,
+      rvolTrendCurve: s.rvolTrendCurve ?? null, rawVolumeTrendCurve: s.rawVolumeTrendCurve ?? null,
+      sellShareCurve: fc?.sellShare ?? null, sellChangeCurve: fc?.sellChange ?? null, buyChangeCurve: fc?.buyChange ?? null,
+      totalChangeCurve: fc?.totalChange ?? null, cvdRateCurve: fc?.cvdRate ?? null, cvdSlopeCurve: fc?.cvdSlope ?? null,
+      widthReversionCurve: s.width?.todayReversion ?? null, widthMomentumCurve: s.width?.todayMomentum ?? null,
+      bookBuyQtyCurve: bc?.buyQty ?? null, bookSellQtyCurve: bc?.sellQty ?? null, imbalanceBookCurve: bc?.imbalance ?? null,
+      spreadPctCurve: bc?.spreadPct ?? null, imbalance5Curve: bc?.imbalance5 ?? null, askQtyTrendCurve: bc?.askTrend ?? null, bidQtyTrendCurve: bc?.bidTrend ?? null,
+    };
   }
 }
